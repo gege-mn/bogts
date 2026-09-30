@@ -5,14 +5,23 @@
  * parsed. Anything that fails while applying it answers 503 so Bonum retries;
  * the ledger makes a retry harmless. Otherwise the answer is 200 `SUCCESS`,
  * including for messages we deliberately ignore. Logs carry no body.
+ *
+ * Every answer is JSON, `{ "status": <http status>, "message": "<CODE>" }`:
+ * the shape of Bonum's own API answers. Bonum's sender parses the reply as
+ * JSON, and a bare `SUCCESS` failed there ("Unrecognized token 'SUCCESS'" in
+ * the merchant portal's webhook log, 2026-09-30) although the payment was
+ * applied.
  */
 import { ApiError, readBody } from '$lib/server/api/errors';
 import { verifyBonumChecksum } from '$lib/server/providers/bonum/checksum';
 import { handleBonumWebhook } from '$lib/server/providers/bonum/webhook';
 import type { RequestHandler } from './$types';
 
-const text = (body: string, status: number, headers: Record<string, string> = {}) =>
-	new Response(body, { status, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', ...headers } });
+const text = (message: string, status: number, headers: Record<string, string> = {}) =>
+	new Response(JSON.stringify({ status, message }), {
+		status,
+		headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers }
+	});
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const config = locals.config;

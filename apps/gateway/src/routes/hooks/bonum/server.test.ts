@@ -46,7 +46,9 @@ describe('POST /hooks/bonum', () => {
 		await seedInvoice();
 		const res = await post(PAYMENT_SUCCESS, { 'x-checksum-v2': await sign(PAYMENT_SUCCESS, KEY) });
 		expect(res.status).toBe(200);
-		expect(await res.text()).toBe('SUCCESS');
+		// JSON, in the shape of Bonum's own answers: its sender parses the reply.
+		expect(res.headers.get('content-type')).toContain('application/json');
+		expect(await res.json()).toEqual({ status: 200, message: 'SUCCESS' });
 		const [row] = await db.select().from(invoice).where(eq(invoice.id, 'N998921'));
 		expect(row!.status).toBe('paid');
 		// A replay is answered SUCCESS too, and changes nothing.

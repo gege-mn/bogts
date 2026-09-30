@@ -61,7 +61,9 @@ minted at, and each sample's local time is that plus 8 hours (for example
    change and exactly one event. A replay is a no-op.
 4. The answer is `200 SUCCESS`, including for messages Bogts deliberately
    ignores. If anything fails while applying it, the answer is `503`, so Bonum
-   retries.
+   retries. Every answer is JSON, `{"status":200,"message":"SUCCESS"}`: Bonum's
+   sender parses the reply, and a bare `SUCCESS` fails there ("Unrecognized
+   token 'SUCCESS'" in the merchant portal's webhook log).
 
 | Bonum `type` | What Bogts does |
 |---|---|

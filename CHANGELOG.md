@@ -7,6 +7,14 @@ change the API; the notes will say how to upgrade.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bonum webhook answers are JSON**: `/hooks/bonum` answered with bare text
+  (`SUCCESS`), which Bonum's sender can't parse. A payment was applied, but
+  Bonum's merchant portal logged the delivery as failed ("Unrecognized token
+  'SUCCESS'"). Every answer is now `{"status": <http status>, "message":
+  "<CODE>"}` with `application/json`; the codes are unchanged.
+
 ### Changed
 
 - **Accent**: Bogts' default accent is now the pouch blue from the logo
