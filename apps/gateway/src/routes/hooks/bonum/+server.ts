@@ -17,7 +17,7 @@ import { verifyBonumChecksum } from '$lib/server/providers/bonum/checksum';
 import { handleBonumWebhook } from '$lib/server/providers/bonum/webhook';
 import type { RequestHandler } from './$types';
 
-const text = (message: string, status: number, headers: Record<string, string> = {}) =>
+const reply = (message: string, status: number, headers: Record<string, string> = {}) =>
 	new Response(JSON.stringify({ status, message }), {
 		status,
 		headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers }
@@ -25,31 +25,31 @@ const text = (message: string, status: number, headers: Record<string, string> =
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const config = locals.config;
-	if (!config?.bonum) return text('NOT_CONFIGURED', 503, { 'retry-after': '300' });
+	if (!config?.bonum) return reply('NOT_CONFIGURED', 503, { 'retry-after': '300' });
 
 	let raw: string;
 	try {
 		raw = await readBody(request);
 	} catch (err) {
-		if (err instanceof ApiError) return text(err.status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_BODY', err.status);
-		return text('INVALID_BODY', 400);
+		if (err instanceof ApiError) return reply(err.status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_BODY', err.status);
+		return reply('INVALID_BODY', 400);
 	}
 	if (!(await verifyBonumChecksum(raw, request.headers.get('x-checksum-v2'), config.bonum.checksumKey))) {
-		return text('INVALID_CHECKSUM', 401);
+		return reply('INVALID_CHECKSUM', 401);
 	}
 	let payload: unknown;
 	try {
 		payload = JSON.parse(raw);
 	} catch {
-		return text('INVALID_JSON', 400);
+		return reply('INVALID_JSON', 400);
 	}
-	if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return text('INVALID_PAYLOAD', 400);
+	if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return reply('INVALID_PAYLOAD', 400);
 
 	try {
 		await handleBonumWebhook({ db: locals.db, config, waitUntil: locals.waitUntil }, payload);
-		return text('SUCCESS', 200);
+		return reply('SUCCESS', 200);
 	} catch (err) {
 		console.error('[bonum] webhook processing failed', err instanceof Error ? err.name : typeof err);
-		return text('RETRY', 503, { 'retry-after': '60' });
+		return reply('RETRY', 503, { 'retry-after': '60' });
 	}
 };
