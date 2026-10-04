@@ -2,6 +2,7 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetQpayTokenCache } from '$lib/server/providers/qpay/client';
 import { fakeQpay, type FakeQpay } from '$lib/server/providers/qpay/fake';
+import { event, invoice, rateLimit } from '$lib/server/schema';
 import { createTestDb, seedProject, testConfig, type TestDb } from '$lib/server/testdb';
 import { STATUS_LIMIT } from '$lib/server/public/invoice-view';
 import { GET as getStatus } from '../../pay/[invoiceId]/status/+server';
@@ -55,6 +56,29 @@ describe('/v1/invoices', () => {
 
 		const cancelled = await call(cancel, `/v1/invoices/${inv.id}/cancel`, { method: 'POST', params: { id: inv.id } });
 		expect(((await cancelled.json()) as { status: string }).status).toBe('cancelled');
+	});
+
+	it('reading one pending QPay invoice asks QPay, at most once per 10 s, and settles a payment', async () => {
+		const inv = (await (await call(create, '/v1/invoices', { method: 'POST', body })).json()) as { id: string };
+		const read = async () => (await (await call(getOne, `/v1/invoices/${inv.id}`, { params: { id: inv.id } })).json()) as { status: string; paidAt: string | null };
+
+		expect((await read()).status).toBe('pending');
+		expect(qpay.count('POST /v2/payment/check')).toBe(1);
+		// Inside the window the read answers from the database.
+		expect((await read()).status).toBe('pending');
+		expect(qpay.count('POST /v2/payment/check')).toBe(1);
+
+		const [row] = await db.select().from(invoice);
+		qpay.pay(row!.providerInvoiceId!, 49_900);
+		await db.delete(rateLimit);
+		const paid = await read();
+		expect(paid.status).toBe('paid');
+		expect(paid.paidAt).not.toBeNull();
+		expect((await db.select().from(event)).map((e) => e.type)).toEqual(['invoice.paid']);
+		// Paid: nothing left to ask.
+		await db.delete(rateLimit);
+		await read();
+		expect(qpay.count('POST /v2/payment/check')).toBe(2);
 	});
 
 	it('answers 200 with the pending invoice for the same purchase, 201 for a new one', async () => {

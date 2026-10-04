@@ -7,6 +7,15 @@ change the API; the notes will say how to upgrade.
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /v1/invoices/:id` re-checks QPay**: while a QPay invoice is pending
+  and unexpired, reading it asks QPay (at most once per 10 s per invoice, the
+  same allowance the hosted page's poll uses) and settles a payment it finds.
+  A project that shows its own QR can now poll with its API key instead of the
+  public `/pay/:id/status`, whose per-address limit every Worker of a project
+  shares.
+
 ### Fixed
 
 - **Bonum webhook answers are JSON**: `/hooks/bonum` answered with bare text

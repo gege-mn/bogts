@@ -188,6 +188,13 @@ to try again.
 
 `GET /v1/invoices/:id` → `200` with the invoice.
 
+While a QPay invoice is `pending` and not past `expiresAt`, this also asks
+QPay, at most once every 10 seconds per invoice, and settles a payment it
+finds (you get `invoice.paid` as usual). So an app that shows the QR itself,
+rather than sending the payer to `payUrl`, can poll this endpoint and is not
+left waiting when QPay's callback is late. `GET /v1/invoices` (the list) reads
+only what Bogts already knows.
+
 ### List invoices
 
 `GET /v1/invoices` → a list of invoices, newest first. Filters:
