@@ -101,11 +101,12 @@ export async function processQpayCallback(ctx: ServiceContext, invoiceId: string
 	return 'duplicate';
 }
 
-/** The hosted page's status poll may ask QPay at most once per this, per invoice. */
+/** A status poll (the hosted page's, or a project's `GET /v1/invoices/:id`) may ask QPay at most once per this, per invoice. */
 export const POLL_CHECK_INTERVAL_MS = 10_000;
 
 /**
- * The hosted QR page's poll (`/pay/:id/status`): while a QPay invoice is
+ * A status poll (the hosted QR page's `/pay/:id/status`, or a project reading
+ * `GET /v1/invoices/:id`): while a QPay invoice is
  * pending and not expired, ask QPay (at most once per 10 s per invoice) and
  * settle a verified payment exactly as the callback does, in case QPay's
  * callback is late or lost. Any failure just leaves the invoice pending.
@@ -120,7 +121,7 @@ export async function pollQpayInvoice(ctx: ServiceContext, inv: Invoice): Promis
 		const result = await qpayInvoiceAdapter.check!(ctx, inv);
 		if (!result.paid) return false;
 		if ((await settleInvoice(ctx, inv, result)) !== 'settled') return false;
-		await note(ctx, inv, 'qpay.poll.paid', 'Paid, verified with QPay while the payer waited on the payment page.');
+		await note(ctx, inv, 'qpay.poll.paid', 'Paid, verified with QPay on a status check while the payer waited.');
 		return true;
 	} catch {
 		return false;
