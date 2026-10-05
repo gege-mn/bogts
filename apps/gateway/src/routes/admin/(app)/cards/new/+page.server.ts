@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import { adminContext, adminOnly, failFrom } from '$lib/server/admin/actions';
 import { isId } from '$lib/server/admin/common';
 import { getProject } from '$lib/server/admin/projects';
@@ -13,7 +13,13 @@ export const load: PageServerLoad = ({ locals }) => {
 };
 
 export const actions: Actions = {
-	/** Starts a card step and sends the browser to Bonum's card page; it comes back to the new card's page. */
+	/**
+	 * Starts a card step and returns Bonum's card page for the browser to open;
+	 * Bonum sends it back to the new card's page. The link is returned, not
+	 * redirected to: the form is posted with fetch, which can't follow a
+	 * redirect to another site (and the CSP's `form-action` forbids a plain post
+	 * that ends there).
+	 */
 	default: async ({ locals, request, url }) => {
 		const { admin, config, ctx } = adminContext(locals);
 		const form = await request.formData();
@@ -23,7 +29,6 @@ export const actions: Actions = {
 			amount: String(form.get('amount') ?? '').trim(),
 			reference: String(form.get('reference') ?? '').trim()
 		};
-		let redirectUrl: string;
 		try {
 			const project = isId(values.projectId) ? await getProject(locals.db, values.projectId) : null;
 			if (!project || project.archivedAt) throw new ApiError(400, 'invalid_request', 'Choose a project');
@@ -42,11 +47,10 @@ export const actions: Actions = {
 				subject: card.id,
 				detail: { customerRef: values.customerRef, ...(amount > 0 ? { amount } : {}) }
 			});
-			redirectUrl = card.redirectUrl;
+			return { redirectUrl: card.redirectUrl };
 		} catch (err) {
 			const f = failFrom(err, 'create');
 			return fail(f.status, { ...f.data, ...values });
 		}
-		redirect(303, redirectUrl);
 	}
 };

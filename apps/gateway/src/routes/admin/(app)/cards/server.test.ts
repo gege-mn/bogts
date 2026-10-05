@@ -31,9 +31,8 @@ function event(path: string, form?: Record<string, string>, params: Record<strin
 /** Starts a card step from the dashboard and returns its id. */
 async function start(form: Record<string, string> = {}) {
 	fakeBonum({ [TOKENIZE]: () => jsonResponse({ followUpLink: LINK, id: '73c6' }) });
-	await expect(call(newActions.default, event('/admin/cards/new', { projectId: project.id, customerRef: 'user-1', ...form }))).rejects.toMatchObject({
-		status: 303,
-		location: LINK
+	expect(await call(newActions.default, event('/admin/cards/new', { projectId: project.id, customerRef: 'user-1', ...form }))).toEqual({
+		redirectUrl: LINK
 	});
 	const [setup] = await db.select().from(cardSetup);
 	return setup!;

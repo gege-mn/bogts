@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { enhance } from '$app/forms';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import Title from '$lib/components/Title.svelte';
 	import { scopedHref } from '$lib/url';
@@ -6,8 +7,9 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let busy = $state(false);
+	const failure = $derived(form && 'error' in form ? form : null);
 	const projects = $derived(data.projects.filter((p) => !p.archived));
-	const selected = $derived(form?.projectId ?? data.scope ?? (projects.length === 1 ? projects[0]!.id : ''));
+	const selected = $derived(failure?.projectId ?? data.scope ?? (projects.length === 1 ? projects[0]!.id : ''));
 </script>
 
 <Title title="Save a card" />
@@ -17,8 +19,22 @@
 		Opens Bonum's card page in this browser. The card is saved for the customer on the chosen project, and the project receives
 		<code>card.saved</code>.
 	</PageHeader>
-	<!-- A plain form post: the answer is a redirect to Bonum's page, which is another site. -->
-	<form class="card form" method="POST" onsubmit={() => (busy = true)}>
+	<form
+		class="card form"
+		method="POST"
+		use:enhance={() => {
+			busy = true;
+			return async ({ result, update }) => {
+				// Bonum's page is another site: leave for it once the card step exists.
+				if (result.type === 'success' && typeof result.data?.redirectUrl === 'string') {
+					window.location.assign(result.data.redirectUrl);
+					return;
+				}
+				busy = false;
+				await update({ reset: false });
+			};
+		}}
+	>
 		<div class="field">
 			<label for="projectId">Project</label>
 			<select id="projectId" name="projectId" class="select" required value={selected}>
@@ -28,19 +44,19 @@
 		</div>
 		<div class="field">
 			<label for="customerRef">Customer ref</label>
-			<input id="customerRef" name="customerRef" class="input mono" required maxlength="128" autocomplete="off" spellcheck="false" value={form?.customerRef ?? ''} />
+			<input id="customerRef" name="customerRef" class="input mono" required maxlength="128" autocomplete="off" spellcheck="false" value={failure?.customerRef ?? ''} />
 			<span class="hint">The project's own id for the customer.</span>
 		</div>
 		<div class="field">
 			<label for="amount">First payment, MNT <span class="subtle">(optional)</span></label>
-			<input id="amount" name="amount" class="input mono" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="0" value={form?.amount ?? ''} aria-describedby="amount-hint" />
+			<input id="amount" name="amount" class="input mono" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="0" value={failure?.amount ?? ''} aria-describedby="amount-hint" />
 			<span class="hint" id="amount-hint">Charged to the card while it is saved. Left empty, Bonum only checks the card with 0.01 MNT.</span>
 		</div>
 		<div class="field">
 			<label for="reference">Payment reference <span class="subtle">(optional)</span></label>
-			<input id="reference" name="reference" class="input mono" maxlength="128" autocomplete="off" spellcheck="false" value={form?.reference ?? ''} />
+			<input id="reference" name="reference" class="input mono" maxlength="128" autocomplete="off" spellcheck="false" value={failure?.reference ?? ''} />
 		</div>
-		{#if form?.error}<p class="error" role="alert">{form.error}</p>{/if}
+		{#if failure?.error}<p class="error" role="alert">{failure.error}</p>{/if}
 		<div class="actions">
 			<a class="btn" href={scopedHref('/admin/cards', data.scope)}>Cancel</a>
 			<button type="submit" class="btn primary" disabled={busy}>{busy ? 'Opening Bonum…' : 'Continue to Bonum'}</button>
