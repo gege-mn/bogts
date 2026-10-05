@@ -23,6 +23,8 @@ change the API; the notes will say how to upgrade.
   card's page shows its charges, events and timeline, and can charge or remove
   it. "Save a card" starts a card step from the dashboard. Payment and charge
   pages show line items, and search finds cards by id or customer ref.
+  The Cards pages are hidden for now (`SAVED_CARDS_UI` in `src/lib/features.ts`),
+  until Bonum confirms that a card token with no plan can be charged.
 - **`GET /v1/invoices/:id` re-checks QPay**: while a QPay invoice is pending
   and unexpired, reading it asks QPay (at most once per 10 s per invoice, the
   same allowance the hosted page's poll uses) and settles a payment it finds.

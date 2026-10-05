@@ -6,6 +6,7 @@
 	import Icon, { type IconName } from '$lib/components/Icon.svelte';
 	import ProjectSwitcher from '$lib/components/ProjectSwitcher.svelte';
 	import BrandLogo from '$lib/components/brand/BrandLogo.svelte';
+	import { SAVED_CARDS_UI } from '$lib/features';
 	import { t, type MessageKey } from '$lib/i18n/en';
 	import { scopedHref } from '$lib/url';
 	import type { LayoutData } from './$types';
@@ -18,7 +19,7 @@
 		{ key: 'nav.payments', path: '/admin/payments', icon: 'receipt', hotkey: 'p' },
 		{ key: 'nav.subscriptions', path: '/admin/subscriptions', icon: 'repeat', hotkey: 's' },
 		{ key: 'nav.charges', path: '/admin/charges', icon: 'coins', hotkey: 'c' },
-		{ key: 'nav.cards', path: '/admin/cards', icon: 'card', hotkey: 'd' },
+		...(SAVED_CARDS_UI ? [{ key: 'nav.cards', path: '/admin/cards', icon: 'card', hotkey: 'd' } as Item] : []),
 		{ key: 'nav.events', path: '/admin/events', icon: 'send', hotkey: 'e' }
 	];
 	const MORE: Item[] = [

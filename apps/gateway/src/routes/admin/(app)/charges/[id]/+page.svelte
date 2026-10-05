@@ -11,6 +11,7 @@
 	import Time from '$lib/components/Time.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
 	import Title from '$lib/components/Title.svelte';
+	import { SAVED_CARDS_UI } from '$lib/features';
 	import { formatCardExpiry, formatCardMask, formatMoney, formatShortDateTime, truncateEnd } from '$lib/format';
 	import { chargeStatus } from '$lib/status';
 	import type { PageData } from './$types';
@@ -89,7 +90,7 @@
 				<div>
 					<dt>Card</dt>
 					<dd>
-						<a class="mono" href="/admin/cards/{data.card.id}">{formatCardMask(data.card.mask)}</a>{#if data.card.bankName}&nbsp;· {data.card.bankName}{/if}{#if data.card.expiry}&nbsp;· {formatCardExpiry(data.card.expiry)}{/if}
+						{#if SAVED_CARDS_UI}<a class="mono" href="/admin/cards/{data.card.id}">{formatCardMask(data.card.mask)}</a>{:else}<span class="mono">{formatCardMask(data.card.mask)}</span>{/if}{#if data.card.bankName}&nbsp;· {data.card.bankName}{/if}{#if data.card.expiry}&nbsp;· {formatCardExpiry(data.card.expiry)}{/if}
 					</dd>
 				</div>
 				<div><dt>Customer ref</dt><dd class="mono">{data.card.customerRef}</dd></div>
