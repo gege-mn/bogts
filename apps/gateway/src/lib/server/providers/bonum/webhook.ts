@@ -183,6 +183,27 @@ function cardTokenAmount(body: Body): number | string | null {
 	return typeof v === 'number' || typeof v === 'string' ? v : null;
 }
 
+/**
+ * The shape of a CARD-TOKEN body, for the timeline: its field names and the
+ * `amounts` entries. Only names, numbers and currency codes; never a value
+ * of another field (the token is one of them).
+ */
+function reportedShape(body: Body): string {
+	const name = (k: string) => (/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(k) ? k : '?');
+	const amounts = Array.isArray(body.amounts)
+		? arr(body.amounts)
+				.slice(0, 5)
+				.map((a) =>
+					Object.entries(a)
+						.slice(0, 6)
+						.map(([k, v]) => `${name(k)} ${typeof v === 'number' ? v : typeof v === 'string' ? safe(v) : typeof v}`)
+						.join(', ')
+				)
+				.join('; ')
+		: `not a list (${typeof body.amounts})`;
+	return `Bonum reported amounts: ${amounts || 'none'}. Fields: ${Object.keys(body).slice(0, 30).map(name).join(', ')}`;
+}
+
 /* ------------------------------------------------------------------ *
  * Entry point
  * ------------------------------------------------------------------ */
@@ -259,6 +280,10 @@ async function cardSaved(ctx: ServiceContext, setup: CardSetup, body: Body): Pro
 	const amount = raw === null || isVerificationCharge(raw) ? 0 : mnt(raw);
 	if (amount === null) {
 		await note(ctx, { ...base, kind: 'bonum.card_token.bad_amount', summary: 'The first payment had an unreadable amount' });
+	}
+	if (setup.paymentAmount !== null && amount !== setup.paymentAmount) {
+		// What Bonum did report, so a first payment it describes differently can be read later.
+		await note(ctx, { ...base, kind: 'bonum.card_token.reported', summary: reportedShape(body) });
 	}
 	const result = await saveCard(ctx, setup, {
 		token,

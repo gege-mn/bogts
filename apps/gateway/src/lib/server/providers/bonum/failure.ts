@@ -83,3 +83,17 @@ export function withFailure(sentence: string, body: Record<string, unknown>): st
 	const detail = describeFailure(body);
 	return detail ? `${sentence}. ${detail}` : sentence;
 }
+
+/**
+ * A refused Purchase, for the charge's timeline: the HTTP status and the safe
+ * codes of its `data`. The bank's response code is `data.respCode` when
+ * present, else the digits that end the answer's `errorCode`
+ * (`${invalid.bonum.response.56}`); that field is Bonum-internal, so it is
+ * only shown to the operator here and never decides anything.
+ */
+export function describePurchaseRefusal(httpStatus: number, answer: unknown, data: Record<string, unknown>): string {
+	const errorCode = answer && typeof answer === 'object' ? (answer as Record<string, unknown>).errorCode : null;
+	const tail = typeof errorCode === 'string' ? /\.(\d{1,3})\}?$/.exec(errorCode.trim())?.[1] : undefined;
+	const detail = describeFailure({ ...data, respCode: respCode(data.respCode) ?? tail });
+	return `HTTP ${httpStatus}${detail ? `. ${detail}` : ''}`;
+}

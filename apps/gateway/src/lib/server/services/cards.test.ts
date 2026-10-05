@@ -6,7 +6,7 @@ import { newId } from '../ids';
 import { resetBonumTokenCache } from '../providers/bonum/client';
 import { fakeBonum, jsonResponse } from '../providers/bonum/testing';
 import { handleBonumWebhook } from '../providers/bonum/webhook';
-import { card as cardTable, cardSetup, charge as chargeTable, event, ledger, subscription as subTable, type Project } from '../schema';
+import { activity, card as cardTable, cardSetup, charge as chargeTable, event, ledger, subscription as subTable, type Project } from '../schema';
 import { createTestDb, seedPlan, seedProject, TEST_ENCRYPTION_KEY, testConfig, type TestDb } from '../testdb';
 import { createCard, getCard, listCards, removeCard, replaceSavedCard } from './cards';
 import { createCharge, reverseCharge } from './charges';
@@ -286,5 +286,39 @@ describe('invoice items', () => {
 		expect(other.reused).toBe(false);
 		await expect(openInvoice(ctx, project, { ...base, amount: 1, items })).rejects.toMatchObject({ status: 400 });
 		await expect(openInvoice(ctx, project, base)).rejects.toMatchObject({ status: 400 });
+	});
+});
+
+describe('what Bonum said, on the timeline', () => {
+	const summaries = async (kind: string) => (await db.select().from(activity).where(eq(activity.kind, kind))).map((a) => a.summary);
+
+	it('a declined charge keeps the HTTP status, card status and bank code', async () => {
+		const cardId = await savedCard();
+		fakeBonum({
+			[PURCHASE]: () =>
+				jsonResponse(
+					{
+						errorCode: '${invalid.bonum.response.56}',
+						message: 'Картаар төлбөр хийх боломжгүй (56)',
+						data: { id: 171044, status: 'FAILED', cardStatus: 'INACTIVE' },
+						status: 400
+					},
+					400
+				)
+		});
+		const c = await createCharge(ctx, project, { cardId, amount: 500, reference: 'r-1' });
+		expect(c).toMatchObject({ status: 'failed', failureCode: 'card_declined' });
+		expect(await summaries('bonum.purchase.declined')).toEqual(['The card was declined (HTTP 400. Bonum: FAILED, INACTIVE, bank code 56)']);
+	});
+
+	it('a first payment Bonum reports differently records the shape of its message, never the token', async () => {
+		fakeBonum({ [TOKENIZE]: tokenizeOk });
+		const pending = await createCard(ctx, project, { customerRef: 'user-1', returnUrl, payment: { amount: 100, reference: 'order-1' } });
+		await handleBonumWebhook(ctx, cardTokenMessage(pending.id, 0.01));
+		const [text] = await summaries('bonum.card_token.reported');
+		expect(text).toBe(
+			'Bonum reported amounts: amount 0.01, currency MNT. Fields: token, mask, expiry, bank, transactionId, completedAt, amounts'
+		);
+		expect(text).not.toContain(`token-${pending.id}`);
 	});
 });

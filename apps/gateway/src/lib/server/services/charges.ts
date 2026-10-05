@@ -31,6 +31,7 @@ import {
 	type Project
 } from '../schema';
 import { BonumError, bonumCall, bonumConfigOf, providerError, unwrap } from '../providers/bonum/client';
+import { describePurchaseRefusal } from '../providers/bonum/failure';
 import { nowOf, type ServiceContext } from './context';
 import { priceFields, priceOf } from './items';
 import { iso, ListQuery, pageOf, type ListPage } from './paging';
@@ -299,7 +300,7 @@ export async function chargeCard(
 		await note(ctx, row, 'bonum.purchase.succeeded', 'Bonum charged the card');
 	} else if (status === 400 || (status >= 200 && status < 300)) {
 		await failCharge(ctx, row, 'card_declined');
-		await note(ctx, row, 'bonum.purchase.declined', 'The card was declined');
+		await note(ctx, row, 'bonum.purchase.declined', `The card was declined (${describePurchaseRefusal(status, body, data)})`);
 	} else if (status === 429) {
 		await failCharge(ctx, row, 'provider_busy');
 		await note(ctx, row, 'bonum.purchase.busy', 'Bonum was busy with this card; nothing was charged');
