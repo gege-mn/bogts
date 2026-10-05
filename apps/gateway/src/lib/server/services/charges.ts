@@ -1,6 +1,7 @@
 /**
- * One-off charges of a subscription's saved card (Bonum `transaction/purchase`
- * with `X-CARD-TOKEN`), and their reversal.
+ * Charges of a saved card (Bonum `transaction/purchase` with `X-CARD-TOKEN`),
+ * and their reversal. The card is named directly (`cardId`) or through a
+ * subscription (`subscriptionId`: that subscription's card).
  *
  * The charge row is written (pending) before Bonum is called, with our id as
  * the merchant `transactionId`, so a queued result (`TOKEN-PAYMENT` webhook)
@@ -17,29 +18,36 @@ import { recordActivity } from '../activity';
 import { ApiError, notFound } from '../api/errors';
 import { eventInserts, type ChargeEventData } from '../events/emit';
 import { newId } from '../ids';
-import { isValidAmount, MAX_AMOUNT } from '../money';
+import { isValidAmount } from '../money';
 import {
 	card as cardTable,
 	charge as chargeTable,
 	CHARGE_STATUSES,
 	ledger,
 	subscription as subTable,
+	type Card,
 	type Charge,
+	type LineItem,
 	type Project
 } from '../schema';
 import { BonumError, bonumCall, bonumConfigOf, providerError, unwrap } from '../providers/bonum/client';
 import { nowOf, type ServiceContext } from './context';
+import { priceFields, priceOf } from './items';
 import { iso, ListQuery, pageOf, type ListPage } from './paging';
 import { cardToken, loadCard } from './subscriptions';
 
 export const CreateChargeInput = z.object({
-	subscriptionId: z.string().min(1).max(64),
-	amount: z.number().int().positive().max(MAX_AMOUNT),
+	/** Send one of these: the card to charge, or a subscription whose card to charge */
+	cardId: z.string().min(1).max(64).optional(),
+	subscriptionId: z.string().min(1).max(64).optional(),
+	/** Send `amount`, or `items` (lines that add up to it; a discount is a negative line) */
+	...priceFields,
 	reference: z.string().min(1).max(128)
 });
 export type CreateChargeInput = z.output<typeof CreateChargeInput>;
 
 export const ChargeListQuery = ListQuery.extend({
+	cardId: z.string().min(1).max(64).optional(),
 	subscriptionId: z.string().min(1).max(64).optional(),
 	status: z.enum(CHARGE_STATUSES).optional()
 });
@@ -52,7 +60,9 @@ export type ChargeJson = {
 	amount: number;
 	currency: 'MNT';
 	reference: string;
+	cardId: string;
 	subscriptionId: string | null;
+	items: LineItem[] | null;
 	failureCode: string | null;
 	createdAt: string;
 };
@@ -65,7 +75,9 @@ export function chargeJson(c: Charge): ChargeJson {
 		amount: c.amount,
 		currency: 'MNT',
 		reference: c.reference,
+		cardId: c.cardId,
 		subscriptionId: c.subscriptionId,
+		items: c.items ?? null,
 		failureCode: c.failureCode,
 		createdAt: iso(c.createdAt)!
 	};
@@ -75,18 +87,24 @@ export function chargeJson(c: Charge): ChargeJson {
 export const chargeLedgerRef = (c: Pick<Charge, 'providerTransactionId'>) => `charge:${c.providerTransactionId}`;
 const reversalLedgerRef = (c: Pick<Charge, 'providerTransactionId'>) => `charge-reverse:${c.providerTransactionId}`;
 
-async function eventData(ctx: ServiceContext, c: Charge, extra: Partial<ChargeEventData> = {}): Promise<ChargeEventData> {
-	const card = await loadCard(ctx, c.cardId);
+/** The `data` of a charge event. */
+export function chargeEventData(c: Charge, customerRef: string, extra: Partial<ChargeEventData> = {}): ChargeEventData {
 	return {
 		chargeId: c.id,
 		cardId: c.cardId,
 		subscriptionId: c.subscriptionId,
-		customerRef: card?.customerRef ?? '',
+		customerRef,
 		reference: c.reference,
 		amount: c.amount,
 		currency: 'MNT',
+		...(c.items ? { items: c.items } : {}),
 		...extra
 	};
+}
+
+async function eventData(ctx: ServiceContext, c: Charge, extra: Partial<ChargeEventData> = {}): Promise<ChargeEventData> {
+	const card = await loadCard(ctx, c.cardId);
+	return chargeEventData(c, card?.customerRef ?? '', extra);
 }
 
 async function reload(ctx: ServiceContext, id: string): Promise<Charge> {
@@ -185,28 +203,57 @@ async function note(ctx: ServiceContext, c: Charge, kind: string, summary: strin
 
 export async function createCharge(ctx: ServiceContext, project: Project, input: CreateChargeInput): Promise<ChargeJson> {
 	bonumConfigOf(ctx);
-	if (!isValidAmount(input.amount)) throw new ApiError(400, 'invalid_request', 'amount: must be a positive whole number of MNT');
-	const [sub] = await ctx.db
-		.select()
-		.from(subTable)
-		.where(and(eq(subTable.id, input.subscriptionId), eq(subTable.projectId, project.id)))
-		.limit(1);
-	if (!sub) throw notFound('Subscription');
-	if (sub.status !== 'active' && sub.status !== 'past_due') {
-		throw new ApiError(409, 'conflict', `The card of a ${sub.status} subscription cannot be charged`);
+	if ((input.cardId === undefined) === (input.subscriptionId === undefined)) {
+		throw new ApiError(400, 'invalid_request', 'cardId: send either cardId or subscriptionId');
 	}
-	const card = await loadCard(ctx, sub.cardId);
+	const price = priceOf(input);
+	if (!isValidAmount(price.amount)) throw new ApiError(400, 'invalid_request', 'amount: must be a positive whole number of MNT');
+
+	let card: Card | null;
+	let subscriptionId: string | null = null;
+	if (input.subscriptionId !== undefined) {
+		const [sub] = await ctx.db
+			.select()
+			.from(subTable)
+			.where(and(eq(subTable.id, input.subscriptionId), eq(subTable.projectId, project.id)))
+			.limit(1);
+		if (!sub) throw notFound('Subscription');
+		if (sub.status !== 'active' && sub.status !== 'past_due') {
+			throw new ApiError(409, 'conflict', `The card of a ${sub.status} subscription cannot be charged`);
+		}
+		subscriptionId = sub.id;
+		card = await loadCard(ctx, sub.cardId);
+		if (!card || card.status !== 'active' || !card.tokenEnc) throw new ApiError(409, 'conflict', 'The subscription has no usable card');
+	} else {
+		card = await loadCard(ctx, input.cardId!);
+		if (!card || card.projectId !== project.id) throw notFound('Card');
+		if (card.status !== 'active' || !card.tokenEnc) throw new ApiError(409, 'conflict', `A ${card.status} card cannot be charged`);
+	}
+	return chargeJson(await chargeCard(ctx, { card, subscriptionId, ...price, reference: input.reference }));
+}
+
+/**
+ * Charges an active card once and returns the charge as it stands: `succeeded`,
+ * `failed`, `queued` or `pending` (see the top of this file). The caller has
+ * checked that the card is the project's and has a token.
+ */
+export async function chargeCard(
+	ctx: ServiceContext,
+	input: { card: Card; subscriptionId: string | null; amount: number; items: LineItem[] | null; reference: string }
+): Promise<Charge> {
+	const { card } = input;
 	const token = await cardToken(ctx, card);
-	if (!card || !token) throw new ApiError(409, 'conflict', 'The subscription has no usable card');
+	if (!token) throw new ApiError(409, 'conflict', `A ${card.status} card cannot be charged`);
 
 	const now = nowOf(ctx);
 	const id = newId();
 	const row: Charge = {
 		id,
-		projectId: project.id,
+		projectId: card.projectId,
 		cardId: card.id,
-		subscriptionId: sub.id,
+		subscriptionId: input.subscriptionId,
 		amount: input.amount,
+		items: input.items,
 		reference: input.reference,
 		providerTransactionId: id,
 		status: 'pending',
@@ -231,12 +278,12 @@ export async function createCharge(ctx: ServiceContext, project: Project, input:
 			// The request may have reached Bonum: the outcome is unknown, so the charge
 			// stays pending (a TOKEN-PAYMENT may still settle it). Never retry blindly.
 			await note(ctx, row, 'bonum.purchase.unknown', `No answer from Bonum (${err.code}); the outcome is unknown`);
-			return chargeJson(await reload(ctx, id));
+			return reload(ctx, id);
 		}
 		// Auth failed before the purchase was sent: nothing was charged.
 		await note(ctx, row, 'bonum.purchase.not_sent', `Bonum could not be reached (${err.code}); nothing was charged`);
 		await failCharge(ctx, row, 'provider_unavailable');
-		return chargeJson(await reload(ctx, id));
+		return reload(ctx, id);
 	}
 
 	const data = unwrap(body);
@@ -262,7 +309,7 @@ export async function createCharge(ctx: ServiceContext, project: Project, input:
 		await failCharge(ctx, row, 'provider_rejected');
 		await note(ctx, row, 'bonum.purchase.rejected', `Bonum refused the payment (HTTP ${status})`);
 	}
-	return chargeJson(await reload(ctx, id));
+	return reload(ctx, id);
 }
 
 /* ------------------------------------------------------------------ *
@@ -286,6 +333,7 @@ export async function getCharge(ctx: ServiceContext, projectId: string, id: stri
 export async function listCharges(ctx: ServiceContext, projectId: string, q: ChargeListQuery): Promise<ListPage<ChargeJson>> {
 	const where: SQL[] = [eq(chargeTable.projectId, projectId)];
 	if (q.cursor) where.push(lt(chargeTable.id, q.cursor));
+	if (q.cardId) where.push(eq(chargeTable.cardId, q.cardId));
 	if (q.subscriptionId) where.push(eq(chargeTable.subscriptionId, q.subscriptionId));
 	if (q.status) where.push(eq(chargeTable.status, q.status));
 	const rows = await ctx.db

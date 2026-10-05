@@ -5,6 +5,7 @@
 	import EventType from '$lib/components/EventType.svelte';
 	import IdChip from '$lib/components/IdChip.svelte';
 	import JsonViewer from '$lib/components/JsonViewer.svelte';
+	import LineItems from '$lib/components/LineItems.svelte';
 	import Money from '$lib/components/Money.svelte';
 	import ProviderTag from '$lib/components/ProviderTag.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
@@ -43,6 +44,7 @@
 
 <div class="detail">
 	<div class="stack">
+		{#if inv.items?.length}<LineItems items={inv.items} />{/if}
 		<Timeline entries={data.timeline} />
 		{#if data.events.length}
 			<section class="card">

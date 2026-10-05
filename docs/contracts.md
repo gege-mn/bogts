@@ -197,7 +197,7 @@ Where the qpay, events, bonum and admin modules refine the contracts above.
   status is the newest such row at or after its last edit, so there is no
   status column.
 - **Admin** (`lib/server/admin/*`): one module per page (`overview`,
-  `invoices`, `subscriptions`, `charges`, `events`, `projects`, `usage`,
+  `invoices`, `subscriptions`, `charges`, `cards`, `events`, `projects`, `usage`,
   `search`, `health`), `actions.ts` for form-action plumbing (`adminOnly`,
   `adminContext`, `failFrom`), `common.ts` for paging and delivery roll-ups.
   Dates on the dashboard are Ulaanbaatar time (UTC+8, no DST): Overview's KPIs
@@ -344,18 +344,22 @@ is only a hint, notifications that never arrive. Code against these.
 - **Errors** use `{ error: { code, message } }`. Codes are snake_case, and these are all the code emits: `invalid_request` (400), `invalid_json` (400), `provider_disabled` (400), `unauthorized` (401), `not_found` (404), `conflict` (409), `plan_mismatch` (409), `idempotency_in_progress` (409), `payload_too_large` (413), `idempotency_key_reused` (422), `rate_limited` (429), `internal_error` (500), `provider_error` (502), `not_configured` (503). `ErrorCode` in `api/errors.ts` is the list; add a code there and here together.
 
 The object shapes:
-- **Invoice:** `{ id, object: 'invoice', provider: 'qpay'|'bonum', status, amount, currency, reference, description, payUrl, redirectUrl, qr: { text, image } | null, deeplinks: Deeplink[], returnUrl, expiresAt, paidAt, metadata, createdAt }`
+- **Invoice:** `{ id, object: 'invoice', provider: 'qpay'|'bonum', status, amount, currency, reference, description, payUrl, redirectUrl, qr: { text, image } | null, deeplinks: Deeplink[], returnUrl, expiresAt, paidAt, metadata, items, createdAt }`
   - `payUrl` is our hosted page `${PUBLIC_ORIGIN}/pay/:id`, for QPay, or Bonum's `redirectUrl` for Bonum.
 - **Subscription:** `{ id, object: 'subscription', plan: '<key>', customerRef, email, status, redirectUrl, card: { mask, expiry, bank } | null, currentPeriod: { start, end } | null, nextBillAt, cancelledAt, createdAt }`
   - `redirectUrl` is non-null only while the subscription is `pending`, or while a card replacement is pending.
-- **Charge:** `{ id, object: 'charge', status, amount, currency, reference, subscriptionId, failureCode, createdAt }`
+- **Card:** `{ id, object: 'card', customerRef, status: 'pending'|'failed'|'active'|'removed', redirectUrl, mask, expiry, bank, createdAt }`
+  - `pending` and `failed` come from the `card_setup` row, `active` and `removed` from the `card` row with the same id. `redirectUrl` is non-null only while `pending`.
+- **Charge:** `{ id, object: 'charge', status, amount, currency, reference, cardId, subscriptionId, items, failureCode, createdAt }`
+- **Line item:** `{ label, amount, quantity }`; `amount` is per unit and negative for a discount. An object's `items` is `null` when it was created with a plain `amount`.
 - **Event:** `{ id, object: 'event', type, createdAt, data }`
 
 The request bodies:
-- `POST /v1/invoices`: `{ provider, amount, reference, description, returnUrl?, expiresIn? (seconds, 60–86400, default 1800), metadata?, reuse? (default true) }` → 201 new, or 200 with the reused pending invoice; response header `Bogts-Reused: true|false` (also on idempotent replays). `@gege-mn/bogts` `invoices.create` returns `Invoice & { reused: boolean }` (`CreatedInvoice`; from the status when the header is absent)
+- `POST /v1/invoices`: `{ provider, amount | items, reference, description, returnUrl?, expiresIn? (seconds, 60–86400, default 1800), metadata?, reuse? (default true) }` → 201 new, or 200 with the reused pending invoice; response header `Bogts-Reused: true|false` (also on idempotent replays). `@gege-mn/bogts` `invoices.create` returns `Invoice & { reused: boolean }` (`CreatedInvoice`; from the status when the header is absent)
 - `POST /v1/subscriptions`: `{ plan, customerRef, email?, returnUrl }`
-- `POST /v1/charges`: `{ subscriptionId, amount, reference }` (charges the subscription's card)
-- `POST /v1/invoices/:id/cancel` and `DELETE /v1/subscriptions/:id` take no body.
+- `POST /v1/charges`: `{ cardId | subscriptionId, amount | items, reference }` (charges that card, or the subscription's card)
+- `POST /v1/cards`: `{ customerRef, returnUrl, payment?: { amount | items, reference } }`; `POST /v1/cards/:id/replace`: `{ returnUrl }`
+- `POST /v1/invoices/:id/cancel`, `DELETE /v1/subscriptions/:id` and `DELETE /v1/cards/:id` take no body.
 - Every POST accepts an `Idempotency-Key` header.
 
 ## Service signatures shared across modules (binding)
@@ -371,6 +375,12 @@ The request bodies:
 - `services/charges.ts`
   - `createCharge(ctx, project, input)`, `getCharge(ctx, projectId, id)`, `listCharges(ctx, projectId, q)`
   - `reverseCharge(ctx, projectId, id, actor?)`, `chargeJson(c)`
+  - `chargeCard(ctx, { card, subscriptionId, amount, items, reference })` → the `Charge` row: one purchase of an active card, with every outcome handled. `createCharge` calls it.
+- `services/cards.ts`
+  - `createCard(ctx, project, input)`, `getCard(ctx, projectId, id)`, `listCards(ctx, projectId, q)`
+  - `replaceSavedCard(ctx, projectId, id, input)`, `removeCard(ctx, projectId, id, actor?)`, `cardJson(c)`
+  - `saveCard(ctx, setup, details)` and `failSetup(ctx, setup)`: called by the CARD-TOKEN webhook
+- `services/items.ts`: `priceFields` (the `amount` and `items` request fields), `priceOf({ amount?, items? })` → `{ amount, items }`
 - `providers/bonum/plans.ts`: `validatePlan(ctx, plan): Promise<{ ok: boolean; problems: string[]; remote: { name, amount, recurringType, status } | null }>`
 - `events/deliver.ts`
   - `deliverDue(db, config, now)`, `deliverFresh(ctx)` (hooks.server.ts runs it via waitUntil after every /v1 and /hooks request)

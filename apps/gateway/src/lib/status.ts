@@ -53,6 +53,19 @@ export function chargeStatus(status: string): StatusView {
 	}
 }
 
+export function cardStatus(status: string): StatusView {
+	switch (status) {
+		case 'active':
+			return view('success', 'status.card.active');
+		case 'failed':
+			return view('danger', 'status.card.failed');
+		case 'removed':
+			return view('muted', 'status.card.removed');
+		default:
+			return view('pending', 'status.card.pending');
+	}
+}
+
 /**
  * A delivery's display state. The table keeps `pending | succeeded | failed`;
  * a pending delivery that has been tried is "retrying". A delivery settled
@@ -113,7 +126,7 @@ export function environmentStatus(env: 'test' | 'production'): StatusView {
 /** Event type tint (ux-brief §4): by the part after the dot. */
 export function eventTypeTone(type: string): 'success' | 'danger' | 'muted' {
 	const tail = type.slice(type.indexOf('.') + 1);
-	if (['paid', 'succeeded', 'renewed', 'active'].includes(tail)) return 'success';
+	if (['paid', 'succeeded', 'renewed', 'active', 'saved'].includes(tail)) return 'success';
 	if (['failed', 'payment_failed'].includes(tail)) return 'danger';
 	return 'muted';
 }

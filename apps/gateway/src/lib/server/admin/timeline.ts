@@ -29,6 +29,9 @@ export type TimelineEntry = {
 const AUDIT_TITLES: Record<string, string> = {
 	'subscription.cancel': 'Cancelled from the dashboard',
 	'charge.reverse': 'Reversal requested from the dashboard',
+	'charge.create': 'Charged from the dashboard',
+	'card.create': 'Card step started from the dashboard',
+	'card.remove': 'Removed from the dashboard',
 	'invoice.cancel': 'Cancelled from the dashboard'
 };
 

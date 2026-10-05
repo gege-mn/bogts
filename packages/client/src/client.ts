@@ -10,7 +10,9 @@ import { BogtsError } from './errors.js';
 import type {
 	BogtsErrorBody,
 	BogtsEvent,
+	Card,
 	Charge,
+	CreateCardInput,
 	CreateChargeInput,
 	CreateInvoiceInput,
 	CreateSubscriptionInput,
@@ -159,6 +161,20 @@ export class Bogts {
 		/** Starts a card replacement; send the customer to the returned `redirectUrl`. */
 		replaceCard: (id: string, opts?: RequestOptions) =>
 			this.request<Subscription>('POST', `/v1/subscriptions/${enc(id)}/card`, opts)
+	};
+
+	readonly cards = {
+		/** Starts a card step; send the customer to the returned `redirectUrl`. The card is saved on `card.saved`. */
+		create: (input: CreateCardInput, opts?: RequestOptions) =>
+			this.request<Card>('POST', '/v1/cards', { ...opts, body: input }),
+		get: (id: string, opts?: RequestOptions) => this.request<Card>('GET', `/v1/cards/${enc(id)}`, opts),
+		list: (params: ListParams = {}, opts?: RequestOptions) =>
+			this.request<List<Card>>('GET', '/v1/cards', { ...opts, query: params }),
+		/** Starts a card step for a new card (a new id); the old card is removed once the new one is saved. */
+		replace: (id: string, input: { returnUrl: string }, opts?: RequestOptions) =>
+			this.request<Card>('POST', `/v1/cards/${enc(id)}/replace`, { ...opts, body: input }),
+		/** Drops the card's token. `DELETE /v1/cards/:id` */
+		remove: (id: string, opts?: RequestOptions) => this.request<Card>('DELETE', `/v1/cards/${enc(id)}`, opts)
 	};
 
 	readonly charges = {

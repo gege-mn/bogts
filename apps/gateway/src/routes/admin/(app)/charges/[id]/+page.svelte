@@ -5,6 +5,7 @@
 	import DeliveryBadge from '$lib/components/DeliveryBadge.svelte';
 	import EventType from '$lib/components/EventType.svelte';
 	import IdChip from '$lib/components/IdChip.svelte';
+	import LineItems from '$lib/components/LineItems.svelte';
 	import Money from '$lib/components/Money.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import Time from '$lib/components/Time.svelte';
@@ -47,6 +48,7 @@
 		{:else if c.status === 'failed' && c.failureCode}
 			<Callout tone="danger">Failed: <code>{c.failureCode}</code></Callout>
 		{/if}
+		{#if c.items?.length}<LineItems items={c.items} />{/if}
 		<Timeline entries={data.timeline} />
 		{#if data.events.length}
 			<section class="card">
@@ -87,7 +89,7 @@
 				<div>
 					<dt>Card</dt>
 					<dd>
-						<span class="mono">{formatCardMask(data.card.mask)}</span>{#if data.card.bankName}&nbsp;· {data.card.bankName}{/if}{#if data.card.expiry}&nbsp;· {formatCardExpiry(data.card.expiry)}{/if}
+						<a class="mono" href="/admin/cards/{data.card.id}">{formatCardMask(data.card.mask)}</a>{#if data.card.bankName}&nbsp;· {data.card.bankName}{/if}{#if data.card.expiry}&nbsp;· {formatCardExpiry(data.card.expiry)}{/if}
 					</dd>
 				</div>
 				<div><dt>Customer ref</dt><dd class="mono">{data.card.customerRef}</dd></div>

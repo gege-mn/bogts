@@ -9,6 +9,20 @@ change the API; the notes will say how to upgrade.
 
 ### Added
 
+- **Saved cards** (`/v1/cards`): save a card for a `customerRef` with no Bonum
+  payment plan, with an optional first payment, and replace or remove it.
+  Bonum never charges such a card on its own. A customer can have several.
+  New events: `card.saved`, `card.failed`, `card.replaced`, `card.removed`.
+- **Charges by card**: `POST /v1/charges` takes `cardId` in place of
+  `subscriptionId`, for any amount. The charge object and `GET /v1/charges`
+  gained `cardId`.
+- **Line items**: invoices, charges and a card's first payment take `items`
+  (`{ label, amount, quantity }`) in place of `amount`. A discount is a line
+  with a negative amount. The lines come back on the object and in its events.
+- **Dashboard: Cards.** A Cards page lists saved cards and card steps; a
+  card's page shows its charges, events and timeline, and can charge or remove
+  it. "Save a card" starts a card step from the dashboard. Payment and charge
+  pages show line items, and search finds cards by id or customer ref.
 - **`GET /v1/invoices/:id` re-checks QPay**: while a QPay invoice is pending
   and unexpired, reading it asks QPay (at most once per 10 s per invoice, the
   same allowance the hosted page's poll uses) and settles a payment it finds.

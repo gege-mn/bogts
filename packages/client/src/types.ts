@@ -10,6 +10,20 @@ export type Provider = 'qpay' | 'bonum';
 export type Currency = 'MNT';
 export type Metadata = Record<string, string>;
 
+/**
+ * One line of what a payment is for. `amount` is integer MNT per unit and is
+ * negative for a discount. The payment's `amount` is the sum of every line's
+ * `amount * quantity`.
+ */
+export interface LineItem {
+	label: string;
+	amount: number;
+	quantity: number;
+}
+
+/** A line as you send it: `quantity` is 1 when omitted. */
+export type LineItemInput = Omit<LineItem, 'quantity'> & { quantity?: number };
+
 export interface List<T> {
 	object: 'list';
 	data: T[];
@@ -50,13 +64,17 @@ export interface Invoice {
 	expiresAt: IsoDate;
 	paidAt: IsoDate | null;
 	metadata: Metadata | null;
+	/** The lines `amount` is the sum of, when the invoice was created with `items` */
+	items: LineItem[] | null;
 	createdAt: IsoDate;
 }
 
 export interface CreateInvoiceInput {
 	provider: Provider;
-	/** Integer MNT */
-	amount: number;
+	/** Integer MNT. Send this or `items`. */
+	amount?: number;
+	/** Lines that add up to the amount; a discount is a line with a negative amount. Send this or `amount`. */
+	items?: LineItemInput[];
 	reference: string;
 	description: string;
 	returnUrl?: string;
@@ -66,7 +84,7 @@ export interface CreateInvoiceInput {
 	/**
 	 * Default true: if the project already has a pending, unexpired invoice for
 	 * the same purchase (the same reference, provider, amount, description,
-	 * returnUrl and metadata), that invoice is returned (HTTP 200, `reused:
+	 * returnUrl, metadata and items), that invoice is returned (HTTP 200, `reused:
 	 * true`) instead of a new one (201). false always creates a new invoice.
 	 * A reference should identify exactly one purchase (an order id).
 	 */
@@ -110,6 +128,39 @@ export interface CreateSubscriptionInput {
 }
 
 /* ------------------------------------------------------------------ *
+ * Cards
+ * ------------------------------------------------------------------ */
+
+/** `pending` and `failed` are the card step; `active` and `removed` a saved card. */
+export type CardStatus = 'pending' | 'failed' | 'active' | 'removed';
+
+/** A saved card. The card token itself never leaves Bogts. */
+export interface Card {
+	id: string;
+	object: 'card';
+	customerRef: string;
+	status: CardStatus;
+	/** Bonum's card page; non-null only while pending */
+	redirectUrl: string | null;
+	mask: string | null;
+	expiry: string | null;
+	bank: string | null;
+	createdAt: IsoDate;
+}
+
+export interface CreateCardInput {
+	customerRef: string;
+	returnUrl: string;
+	/** A first payment taken while the card is saved. Without it nothing is charged. */
+	payment?: {
+		/** Integer MNT. Send this or `items`. */
+		amount?: number;
+		items?: LineItemInput[];
+		reference: string;
+	};
+}
+
+/* ------------------------------------------------------------------ *
  * Charges
  * ------------------------------------------------------------------ */
 
@@ -122,16 +173,24 @@ export interface Charge {
 	amount: number;
 	currency: Currency;
 	reference: string;
+	cardId: string;
 	subscriptionId: string | null;
+	/** The lines `amount` is the sum of, when the charge was created with `items` */
+	items: LineItem[] | null;
 	/** A short machine code, never provider text */
 	failureCode: string | null;
 	createdAt: IsoDate;
 }
 
 export interface CreateChargeInput {
-	/** Charges this subscription's saved card */
-	subscriptionId: string;
-	amount: number;
+	/** The saved card to charge. Send this or `subscriptionId`. */
+	cardId?: string;
+	/** Charges this subscription's card. Send this or `cardId`. */
+	subscriptionId?: string;
+	/** Integer MNT. Send this or `items`. */
+	amount?: number;
+	/** Lines that add up to the amount; a discount is a line with a negative amount. Send this or `amount`. */
+	items?: LineItemInput[];
 	reference: string;
 }
 
@@ -150,7 +209,11 @@ export const EVENT_TYPES = [
 	'subscription.card_changed',
 	'charge.succeeded',
 	'charge.failed',
-	'charge.reversed'
+	'charge.reversed',
+	'card.saved',
+	'card.failed',
+	'card.replaced',
+	'card.removed'
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -168,6 +231,8 @@ export interface InvoiceEventData {
 	/** invoice.paid */
 	paidAt?: IsoDate;
 	metadata?: Metadata | null;
+	/** The lines the amount is the sum of, when the invoice was created with `items` */
+	items?: LineItem[];
 	/**
 	 * invoice.paid only: another invoice with the same `reference` was paid
 	 * first (its id). The payer paid twice for one purchase: refund one.
@@ -211,8 +276,23 @@ export interface ChargeEventData {
 	reference: string;
 	amount: number;
 	currency: Currency;
+	/** The lines the amount is the sum of, when the charge was created with `items` */
+	items?: LineItem[];
 	/** charge.failed: a short machine code, never provider text */
 	failureCode?: string | null;
+}
+
+export interface CardEventData {
+	cardId: string;
+	customerRef: string;
+	/** card.saved / card.replaced: the card's display mask */
+	cardMask?: string;
+	/** card.replaced: the card this one took the place of (now removed) */
+	replacesCardId?: string;
+	/** card.saved / card.replaced: the charge of the first payment, when one was taken */
+	chargeId?: string;
+	/** card.failed: `checkout_failed`. card.removed: `removed_by_project` or `removed_by_admin`. */
+	reason?: string;
 }
 
 /** The `data` of each event type. */
@@ -228,6 +308,10 @@ export interface EventDataMap {
 	'charge.succeeded': ChargeEventData;
 	'charge.failed': ChargeEventData;
 	'charge.reversed': ChargeEventData;
+	'card.saved': CardEventData;
+	'card.failed': CardEventData;
+	'card.replaced': CardEventData;
+	'card.removed': CardEventData;
 }
 
 /** One event of type `T`: a webhook body and a feed item. */

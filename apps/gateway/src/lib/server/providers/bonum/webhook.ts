@@ -2,9 +2,10 @@
  * Bonum webhooks (already checksum-verified and parsed by `/hooks/bonum`).
  *
  *  - CARD-TOKEN: a tokenization finished. Matched by `transactionId` to a
- *    subscription's checkout (activate, and credit the `payNow` first charge)
- *    or to a pending card replacement (switch cards; the 0.01 MNT verification
- *    charge is not a payment).
+ *    subscription's checkout (activate, and credit the `payNow` first charge),
+ *    to a pending card replacement (switch cards; the 0.01 MNT verification
+ *    charge is not a payment), or to a plan-less card step (`card_setup`: save
+ *    the card, and record its first payment as a charge).
  *  - SUBSCRIPTION-PAYMENT: a renewal. The ledger key is `sub-invoice:<invoiceId>`,
  *    NEVER the `transactionId`, which is the tokenization id and is the same on
  *    every renewal (docs/providers/bonum-pitfalls.md #1). The row also carries the billing
@@ -32,15 +33,18 @@ import { newId } from '../../ids';
 import { isVerificationCharge, MoneyError, toMnt } from '../../money';
 import {
 	card as cardTable,
+	cardSetup,
 	charge as chargeTable,
 	event,
 	invoice as invoiceTable,
 	ledger,
 	plan as planTable,
 	subscription as subTable,
+	type CardSetup,
 	type Plan,
 	type Subscription
 } from '../../schema';
+import { failSetup, saveCard } from '../../services/cards';
 import { failCharge, succeedCharge } from '../../services/charges';
 import { nowOf, type ServiceContext } from '../../services/context';
 import { endInvoice, settleInvoice } from '../../services/settle';
@@ -232,12 +236,51 @@ async function cardToken(ctx: ServiceContext, body: Body, success: boolean): Pro
 	}
 	if (replacing) return success ? cardReplaced(ctx, replacing, body, txn) : replacementFailed(ctx, replacing, body, txn);
 
+	const [setup] = txn ? await ctx.db.select().from(cardSetup).where(eq(cardSetup.id, txn)).limit(1) : [];
+	if (setup) return success ? cardSaved(ctx, setup, body) : cardStepFailed(ctx, setup, body);
+
 	await note(ctx, {
 		subjectType: 'provider',
 		kind: 'bonum.card_token.unknown',
 		summary: `Ignored a card token for an unknown transaction ${safe(txn)}`
 	});
 	return 'ignored';
+}
+
+/** A plan-less card step succeeded: the card is saved, and a first payment in `amounts` is a charge. */
+async function cardSaved(ctx: ServiceContext, setup: CardSetup, body: Body): Promise<WebhookResult> {
+	const base = { projectId: setup.projectId, subjectType: 'card' as const, subjectId: setup.id };
+	const token = str(body.token);
+	if (!token) {
+		await note(ctx, { ...base, kind: 'bonum.card_token.no_token', summary: 'Bonum reported a card without a token' });
+		return 'ignored';
+	}
+	const raw = cardTokenAmount(body);
+	const amount = raw === null || isVerificationCharge(raw) ? 0 : mnt(raw);
+	if (amount === null) {
+		await note(ctx, { ...base, kind: 'bonum.card_token.bad_amount', summary: 'The first payment had an unreadable amount' });
+	}
+	const result = await saveCard(ctx, setup, {
+		token,
+		mask: str(body.mask).slice(0, 32) || '****',
+		expiry: str(body.expiry).slice(0, 16) || null,
+		bankName: str(obj(body.bank)?.name).slice(0, 100) || null,
+		paidAmount: amount ?? 0
+	});
+	return result === 'saved' ? 'processed' : 'duplicate';
+}
+
+async function cardStepFailed(ctx: ServiceContext, setup: CardSetup, body: Body): Promise<WebhookResult> {
+	const base = { projectId: setup.projectId, subjectType: 'card' as const, subjectId: setup.id };
+	if (!(await failSetup(ctx, setup))) {
+		if (setup.status === 'completed') {
+			await note(ctx, { ...base, kind: 'bonum.card_token.failed_late', summary: withFailure('Ignored a failed tokenization for a card already saved', body) });
+			return 'ignored';
+		}
+		return 'duplicate';
+	}
+	await note(ctx, { ...base, kind: 'bonum.card_token.failed', summary: withFailure('The customer did not complete the card step', body) });
+	return 'processed';
 }
 
 async function newCardRow(ctx: ServiceContext, sub: Subscription, body: Body, token: string, now: number) {

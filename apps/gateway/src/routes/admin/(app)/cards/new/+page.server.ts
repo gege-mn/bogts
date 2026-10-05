@@ -1,0 +1,52 @@
+import { fail, redirect } from '@sveltejs/kit';
+import { adminContext, adminOnly, failFrom } from '$lib/server/admin/actions';
+import { isId } from '$lib/server/admin/common';
+import { getProject } from '$lib/server/admin/projects';
+import { ApiError } from '$lib/server/api/errors';
+import { recordAudit } from '$lib/server/audit';
+import { createCard } from '$lib/server/services/cards';
+import type { Actions, PageServerLoad } from './$types';
+
+export const load: PageServerLoad = ({ locals }) => {
+	adminOnly(locals);
+	return {};
+};
+
+export const actions: Actions = {
+	/** Starts a card step and sends the browser to Bonum's card page; it comes back to the new card's page. */
+	default: async ({ locals, request, url }) => {
+		const { admin, config, ctx } = adminContext(locals);
+		const form = await request.formData();
+		const values = {
+			projectId: String(form.get('projectId') ?? ''),
+			customerRef: String(form.get('customerRef') ?? '').trim(),
+			amount: String(form.get('amount') ?? '').trim(),
+			reference: String(form.get('reference') ?? '').trim()
+		};
+		let redirectUrl: string;
+		try {
+			const project = isId(values.projectId) ? await getProject(locals.db, values.projectId) : null;
+			if (!project || project.archivedAt) throw new ApiError(400, 'invalid_request', 'Choose a project');
+			if (!values.customerRef || values.customerRef.length > 128) throw new ApiError(400, 'invalid_request', 'Enter a customer ref');
+			if (values.amount && !/^\d+$/.test(values.amount)) throw new ApiError(400, 'invalid_request', 'The first payment is a whole number of MNT');
+			const amount = Number(values.amount || 0);
+			const card = await createCard(ctx, project, {
+				customerRef: values.customerRef,
+				returnUrl: `${config.publicOrigin ?? url.origin}/admin/cards`,
+				...(amount > 0 ? { payment: { amount, reference: values.reference || `admin-${Date.now()}` } } : {})
+			});
+			if (!card.redirectUrl) throw new ApiError(502, 'provider_error', 'Bonum returned no card page');
+			await recordAudit(locals.db, {
+				admin,
+				action: 'card.create',
+				subject: card.id,
+				detail: { customerRef: values.customerRef, ...(amount > 0 ? { amount } : {}) }
+			});
+			redirectUrl = card.redirectUrl;
+		} catch (err) {
+			const f = failFrom(err, 'create');
+			return fail(f.status, { ...f.data, ...values });
+		}
+		redirect(303, redirectUrl);
+	}
+};
