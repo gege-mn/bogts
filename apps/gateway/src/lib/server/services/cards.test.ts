@@ -292,12 +292,13 @@ describe('invoice items', () => {
 describe('what Bonum said, on the timeline', () => {
 	const summaries = async (kind: string) => (await db.select().from(activity).where(eq(activity.kind, kind))).map((a) => a.summary);
 
-	it('a declined charge keeps the HTTP status, card status and bank code', async () => {
+	it('a declined charge keeps the HTTP status, card status, bank code and Bonum\'s ids', async () => {
 		const cardId = await savedCard();
 		fakeBonum({
 			[PURCHASE]: () =>
 				jsonResponse(
 					{
+						traceId: '6965b3f57a560ad2d5d7dcd0bccedcfe',
 						errorCode: '${invalid.bonum.response.56}',
 						message: 'Картаар төлбөр хийх боломжгүй (56)',
 						data: { id: 171044, status: 'FAILED', cardStatus: 'INACTIVE' },
@@ -308,7 +309,9 @@ describe('what Bonum said, on the timeline', () => {
 		});
 		const c = await createCharge(ctx, project, { cardId, amount: 500, reference: 'r-1' });
 		expect(c).toMatchObject({ status: 'failed', failureCode: 'card_declined' });
-		expect(await summaries('bonum.purchase.declined')).toEqual(['The card was declined (HTTP 400. Bonum: FAILED, INACTIVE, bank code 56)']);
+		expect(await summaries('bonum.purchase.declined')).toEqual([
+			'The card was declined (HTTP 400. Bonum: FAILED, INACTIVE, bank code 56. Bonum payment 171044, trace 6965b3f57a560ad2d5d7dcd0bccedcfe)'
+		]);
 	});
 
 	it('a first payment Bonum reports differently records the shape of its message, never the token', async () => {
