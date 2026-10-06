@@ -102,7 +102,12 @@ Where the foundation refines or departs from the table above. Code against these
   the deliverer settles those (`last_error = 'no_webhook_url'`). A new delivery's
   `next_attempt_at` is `now + 60 s`, so the inline attempt rarely races the cron.
 - **`deliverDue(db, config, now)`** and **`sweepExpired(db, config, now)`**
-  return a count and never reject. The cron runs deliver every minute; sweep
+  return a count and never reject. **`expireCardSteps(db, config, now)`**
+  (`services/cards.ts`, run in the `sweep` job after `sweepExpired`) ends up
+  to `CARD_STEP_BATCH` card steps still `pending` `CARD_STEP_TTL_MS` (24 h)
+  after they were started: `failSetup` (`card.failed`, reason
+  `checkout_failed`) and activity `card.step_expired`; a row that throws is
+  logged and skipped. The cron runs deliver every minute; sweep
   and late_check every 10 min (`minute % 10 === 0`); reconcile hourly at :05;
   and a purge of idempotency keys and rate-limit windows hourly at :00,
   writing `cron_heartbeat` rows (`tick` + each job).
@@ -326,7 +331,13 @@ is only a hint, notifications that never arrive. Code against these.
   `period_key = <key>:<invoiceId>` and `bonum.subscription_payment.same_period`.
   A FAILED webhook whose attempt time maps to a credited period is ignored.
   A charge before the first scheduled date has no key (the `payNow` charge).
-- **Cron**: deliver every minute; sweep then late check when `minute % 10 ===
+- **A card step's first payment** (`cardSaved`): a SUCCESS `CARD-TOKEN` for a
+  step with `payment_amount` set is recorded as a succeeded charge at the
+  payable MNT amount Bonum reports, or, when it reports none (absent, only the
+  0.01 MNT check, or unreadable), at `payment_amount`, with activity
+  `bonum.card_token.amount_assumed`. `failSetup` emits `card.failed` only for
+  the caller whose conditional update ended the step.
+- **Cron**: deliver every minute; sweep (with card-step expiry) then late check when `minute % 10 ===
   0`; reconcile at minute 5; purge at minute 0. `cronStatus` reports
   `lateCheck` and `reconcile` too.
 - **Checkout refused by Bonum** (`createSubscription`): the row ends `failed`

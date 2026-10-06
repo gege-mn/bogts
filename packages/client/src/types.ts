@@ -289,7 +289,7 @@ export interface CardEventData {
 	cardMask?: string;
 	/** card.replaced: the card this one took the place of (now removed) */
 	replacesCardId?: string;
-	/** card.saved: the charge of the first payment, when one was taken */
+	/** card.saved / card.replaced: the charge of the first payment, when one was taken */
 	chargeId?: string;
 	/** card.failed: `checkout_failed`. card.removed: `removed_by_project` or `removed_by_admin`. */
 	reason?: string;

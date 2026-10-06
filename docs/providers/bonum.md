@@ -145,6 +145,9 @@ cards with no plan:
   for a card step that asked for a payment is recorded as that amount unless
   Bonum reports a different payable one, and the card's timeline says the
   amount was assumed, with the field names and amounts Bonum did send.
+  When `amounts[]` lists both the 0.01 MNT check and a payment, the payment
+  is the one read; that holds for a subscription's first charge and for a
+  subscription's card replacement too.
 - Rollback Purchase **refused** that first payment (HTTP 400), using the
   tokenization's `transactionId`. `POST /v1/charges/:id/reverse` still tries
   it and answers `502 provider_error` when Bonum refuses. That test ran while

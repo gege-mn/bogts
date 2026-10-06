@@ -15,6 +15,11 @@ change the API; the notes will say how to upgrade.
   New events: `card.saved`, `card.failed`, `card.replaced`, `card.removed`.
   A card step nobody finishes becomes `failed` after 24 hours. The customer
   returns from Bonum through the new public route `GET /return/c/:cardId`.
+  Bonum does not always report a first payment's amount, so a card step that
+  asked for one is recorded at the amount asked for unless Bonum reports
+  another; Bonum has refused to reverse such a first payment.
+  **Apply migrations `0008_saved_cards` and `0009_card_setup_pending` before
+  deploying.**
 - **Charges by card**: `POST /v1/charges` takes `cardId` in place of
   `subscriptionId`, for any amount. The charge object and `GET /v1/charges`
   gained `cardId`.
