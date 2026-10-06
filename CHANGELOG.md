@@ -7,6 +7,8 @@ change the API; the notes will say how to upgrade.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-06
+
 ### Added
 
 - **Saved cards** (`/v1/cards`): save a card for a `customerRef` with no Bonum

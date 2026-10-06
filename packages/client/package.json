@@ -1,6 +1,6 @@
 {
 	"name": "@gege-mn/bogts",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Typed client and webhook signature check for Bogts, the self-hosted Mongolian payment gateway",
 	"license": "Apache-2.0",
 	"repository": {
