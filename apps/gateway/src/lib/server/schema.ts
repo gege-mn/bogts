@@ -249,7 +249,11 @@ export const cardSetup = sqliteTable(
 		createdAt: integer('created_at').notNull(),
 		updatedAt: integer('updated_at').notNull()
 	},
-	(t) => [index('card_setup_project_customer_idx').on(t.projectId, t.customerRef)]
+	(t) => [
+		index('card_setup_project_customer_idx').on(t.projectId, t.customerRef),
+		// The cron's expiry of abandoned card steps.
+		index('card_setup_pending_idx').on(t.createdAt).where(sql`${t.status} = 'pending'`)
+	]
 );
 
 /** A Bonum card mandate on a plan. */

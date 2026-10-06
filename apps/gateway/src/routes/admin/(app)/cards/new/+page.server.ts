@@ -4,6 +4,7 @@ import { isId } from '$lib/server/admin/common';
 import { getProject } from '$lib/server/admin/projects';
 import { ApiError } from '$lib/server/api/errors';
 import { recordAudit } from '$lib/server/audit';
+import { MAX_AMOUNT } from '$lib/server/money';
 import { createCard } from '$lib/server/services/cards';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -15,7 +16,7 @@ export const load: PageServerLoad = ({ locals }) => {
 export const actions: Actions = {
 	/**
 	 * Starts a card step and returns Bonum's card page for the browser to open;
-	 * Bonum sends it back to the new card's page. The link is returned, not
+	 * Bonum sends it back to the Cards page, which opens the new card. The link is returned, not
 	 * redirected to: the form is posted with fetch, which can't follow a
 	 * redirect to another site (and the CSP's `form-action` forbids a plain post
 	 * that ends there).
@@ -35,6 +36,8 @@ export const actions: Actions = {
 			if (!values.customerRef || values.customerRef.length > 128) throw new ApiError(400, 'invalid_request', 'Enter a customer ref');
 			if (values.amount && !/^\d+$/.test(values.amount)) throw new ApiError(400, 'invalid_request', 'The first payment is a whole number of MNT');
 			const amount = Number(values.amount || 0);
+			if (amount > MAX_AMOUNT) throw new ApiError(400, 'invalid_request', `The first payment can be at most ${MAX_AMOUNT} MNT`);
+			if (values.reference.length > 128) throw new ApiError(400, 'invalid_request', 'The reference can be at most 128 characters');
 			const card = await createCard(ctx, project, {
 				customerRef: values.customerRef,
 				returnUrl: `${config.publicOrigin ?? url.origin}/admin/cards`,

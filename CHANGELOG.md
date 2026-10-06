@@ -13,12 +13,18 @@ change the API; the notes will say how to upgrade.
   payment plan, with an optional first payment, and replace or remove it.
   Bonum never charges such a card on its own. A customer can have several.
   New events: `card.saved`, `card.failed`, `card.replaced`, `card.removed`.
+  A card step nobody finishes becomes `failed` after 24 hours. The customer
+  returns from Bonum through the new public route `GET /return/c/:cardId`.
 - **Charges by card**: `POST /v1/charges` takes `cardId` in place of
   `subscriptionId`, for any amount. The charge object and `GET /v1/charges`
   gained `cardId`.
 - **Line items**: invoices, charges and a card's first payment take `items`
   (`{ label, amount, quantity }`) in place of `amount`. A discount is a line
   with a negative amount. The lines come back on the object and in its events.
+  A pending invoice is reused only when its lines match too.
+- **Client (`@gege-mn/bogts`)**: `bogts.cards` (`create`, `get`, `list`,
+  `replace`, `remove`), `cardId` and `items` on charges, `items` on invoices,
+  and the `Card`, `LineItem` and `CardEventData` types.
 - **Dashboard: Cards.** A Cards page lists saved cards and card steps; a
   card's page shows its charges, events and timeline, and can charge or remove
   it. "Save a card" starts a card step from the dashboard. Payment and charge

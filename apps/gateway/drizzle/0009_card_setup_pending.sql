@@ -1,0 +1,1 @@
+CREATE INDEX `card_setup_pending_idx` ON `card_setup` (`created_at`) WHERE "card_setup"."status" = 'pending';

@@ -1,9 +1,9 @@
 /**
  * The scheduled tick (`triggers.crons = ["* * * * *"]`), called from
  * `src/worker.ts`. Every minute: retry due webhook deliveries. When the
- * minute is a multiple of 10: the invoice expiry sweep, then the late check of
- * expired QPay invoices. At minute 5: renewal reconciliation (`reconcile.ts`).
- * At minute 0: purge
+ * minute is a multiple of 10: the invoice expiry sweep with the expiry of
+ * abandoned card steps, then the late check of expired QPay invoices. At
+ * minute 5: renewal reconciliation (`reconcile.ts`). At minute 0: purge
  * expired idempotency keys and old rate-limit windows. Each job, and the tick
  * as a whole (`tick`), writes a `cron_heartbeat` row.
  *
@@ -18,6 +18,7 @@ import { purgeIdempotency } from './idempotency';
 import { purgeRateLimits } from './rate-limit';
 import { cronHeartbeat } from './schema';
 import { reconcileRenewals } from './reconcile';
+import { expireCardSteps } from './services/cards';
 import { lateCheckExpired, sweepExpired } from './sweep';
 
 /** The hourly renewal reconciliation runs at this minute (off the busy :00). */
@@ -30,7 +31,13 @@ export function jobsFor(scheduledTime: number): Job[] {
 	const minute = new Date(scheduledTime).getUTCMinutes();
 	const jobs: Job[] = [{ name: 'deliver', run: deliverDue }];
 	if (minute % 10 === 0) {
-		jobs.push({ name: 'sweep', run: sweepExpired });
+		jobs.push({
+			name: 'sweep',
+			run: async (db, config, now) => {
+				await sweepExpired(db, config, now);
+				await expireCardSteps(db, config, now);
+			}
+		});
 		jobs.push({ name: 'late_check', run: lateCheckExpired });
 	}
 	if (minute === RECONCILE_MINUTE) jobs.push({ name: 'reconcile', run: reconcileRenewals });

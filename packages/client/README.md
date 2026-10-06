@@ -47,9 +47,10 @@ const sub = await bogts.subscriptions.create({
 	returnUrl: 'https://app.example.com/billing'
 });
 
-// A saved card with no plan: send the customer to `redirectUrl`, wait for `card.saved`.
+// A saved card with no plan: send the customer to `redirectUrl`, then wait for `card.saved`.
 const card = await bogts.cards.create({ customerRef: 'user_123', returnUrl: 'https://app.example.com/billing' });
 
+// Later, once `card.saved` has arrived for `card.id`:
 try {
 	// Any amount, as `amount` or as `items` (a discount is a negative line).
 	await bogts.charges.create({

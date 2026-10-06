@@ -8,7 +8,7 @@ import { fakeBonum, jsonResponse } from '../providers/bonum/testing';
 import { handleBonumWebhook } from '../providers/bonum/webhook';
 import { activity, card as cardTable, cardSetup, charge as chargeTable, event, ledger, subscription as subTable, type Project } from '../schema';
 import { createTestDb, seedPlan, seedProject, TEST_ENCRYPTION_KEY, testConfig, type TestDb } from '../testdb';
-import { createCard, getCard, listCards, removeCard, replaceSavedCard } from './cards';
+import { CARD_STEP_TTL_MS, createCard, expireCardSteps, getCard, listCards, removeCard, replaceSavedCard } from './cards';
 import { createCharge, reverseCharge } from './charges';
 import type { ServiceContext } from './context';
 import { openInvoice } from './invoices';
@@ -147,6 +147,19 @@ describe('CARD-TOKEN for a card step', () => {
 		// The replay credits nothing more.
 		await handleBonumWebhook(ctx, cardTokenMessage(pending.id, 40_000));
 		expect(await db.select().from(ledger)).toHaveLength(1);
+	});
+
+	it('a card step nobody finishes is ended after CARD_STEP_TTL_MS, once; a late card is still saved', async () => {
+		fakeBonum({ [TOKENIZE]: tokenizeOk });
+		const pending = await createCard(ctx, project, { customerRef: 'user-1', returnUrl });
+		const now = ctx.now!;
+		expect(await expireCardSteps(db, ctx.config, now + CARD_STEP_TTL_MS - 60_000)).toBe(0);
+		expect(await expireCardSteps(db, ctx.config, now + CARD_STEP_TTL_MS + 60_000)).toBe(1);
+		expect(await expireCardSteps(db, ctx.config, now + CARD_STEP_TTL_MS + 120_000)).toBe(0);
+		expect(await getCard(ctx, project.id, pending.id)).toMatchObject({ status: 'failed', redirectUrl: null });
+		expect(await types()).toEqual(['card.failed']);
+		expect(await handleBonumWebhook(ctx, cardTokenMessage(pending.id, 0.01))).toBe('processed');
+		expect(await getCard(ctx, project.id, pending.id)).toMatchObject({ status: 'active' });
 	});
 
 	it('a failed step ends failed with card.failed; a later success still saves the card', async () => {
@@ -323,5 +336,43 @@ describe('what Bonum said, on the timeline', () => {
 			'Bonum reported amounts: amount 0.01, currency MNT. Fields: token, mask, expiry, bank, transactionId, completedAt, amounts'
 		);
 		expect(text).not.toContain(`token-${pending.id}`);
+	});
+
+	it('a first payment Bonum took but did not report is recorded as the amount asked for', async () => {
+		fakeBonum({ [TOKENIZE]: tokenizeOk });
+		const items = [{ label: 'Pro', amount: 100, quantity: 1 }];
+		for (const amounts of [undefined, [], [{ amount: 0.01, currency: 'MNT' }]]) {
+			const pending = await createCard(ctx, project, { customerRef: 'user-1', returnUrl, payment: { reference: 'order-1', items } });
+			const message = cardTokenMessage(pending.id, 0);
+			(message.body as Record<string, unknown>).amounts = amounts;
+			expect(await handleBonumWebhook(ctx, message)).toBe('processed');
+			const [charge] = await db.select().from(chargeTable).where(eq(chargeTable.cardId, pending.id));
+			expect(charge).toMatchObject({ status: 'succeeded', amount: 100, reference: 'order-1', items, providerTransactionId: pending.id });
+			expect(await db.select().from(ledger).where(eq(ledger.subjectId, charge!.id))).toHaveLength(1);
+		}
+		expect(await summaries('bonum.card_token.amount_assumed')).toHaveLength(3);
+		expect((await summaries('bonum.card_token.amount_assumed'))[0]).toBe(
+			"Bonum did not report the first payment's amount; recorded the 100 MNT asked for"
+		);
+		expect(await summaries('bonum.card_token.amount_mismatch')).toEqual([]);
+	});
+
+	it('an amount Bonum does report wins over the amount asked for, and a payment is read past the 0.01 check', async () => {
+		fakeBonum({ [TOKENIZE]: tokenizeOk });
+		const pending = await createCard(ctx, project, { customerRef: 'user-1', returnUrl, payment: { amount: 100, reference: 'order-1' } });
+		const message = cardTokenMessage(pending.id, 0);
+		message.body.amounts = [
+			{ amount: 0.01, currency: 'MNT' },
+			{ amount: 250, currency: 'MNT' }
+		];
+		await handleBonumWebhook(ctx, message);
+		const [charge] = await db.select().from(chargeTable).where(eq(chargeTable.cardId, pending.id));
+		expect(charge).toMatchObject({ amount: 250, items: null });
+		expect(await summaries('bonum.card_token.amount_mismatch')).toEqual(['The first payment was 250 MNT, not the 100 MNT asked for']);
+	});
+
+	it('a card saved with no payment asked for records no charge', async () => {
+		const id = await savedCard();
+		expect(await db.select().from(chargeTable).where(eq(chargeTable.cardId, id))).toEqual([]);
 	});
 });

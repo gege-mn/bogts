@@ -68,6 +68,7 @@ The event types are:
 - `invoice.paid`, `invoice.expired`, `invoice.failed`
 - `subscription.active`, `subscription.renewed`, `subscription.payment_failed`, `subscription.cancelled`, `subscription.card_changed`
 - `charge.succeeded`, `charge.failed`, `charge.reversed`
+- `card.saved`, `card.failed`, `card.replaced`, `card.removed`
 
 Each event is `{ id, object: 'event', type, createdAt, data }`; `data` carries the
 reference or `customerRef`, `amount`, `currency`, and `period` / `nextBillAt` where

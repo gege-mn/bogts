@@ -176,11 +176,16 @@ async function mandateOf(ctx: ServiceContext, body: Body) {
 	);
 }
 
-/** The MNT amount in a CARD-TOKEN `amounts[]`, raw (so 0.01 can be told apart). */
+/**
+ * The MNT amount in a CARD-TOKEN `amounts[]`, raw (so 0.01 can be told apart).
+ * A payment is preferred over the 0.01 MNT check when both are listed.
+ */
 function cardTokenAmount(body: Body): number | string | null {
-	const entry = arr(body.amounts).find((a) => !a.currency || str(a.currency) === 'MNT');
-	const v = entry?.amount;
-	return typeof v === 'number' || typeof v === 'string' ? v : null;
+	const amounts = arr(body.amounts)
+		.filter((a) => !a.currency || str(a.currency) === 'MNT')
+		.map((a) => a.amount)
+		.filter((v): v is number | string => typeof v === 'number' || typeof v === 'string');
+	return amounts.find((v) => !isVerificationCharge(v)) ?? amounts[0] ?? null;
 }
 
 /**
@@ -268,21 +273,36 @@ async function cardToken(ctx: ServiceContext, body: Body, success: boolean): Pro
 	return 'ignored';
 }
 
-/** A plan-less card step succeeded: the card is saved, and a first payment in `amounts` is a charge. */
+/**
+ * A plan-less card step succeeded: the card is saved, and its first payment is
+ * a charge. Bonum takes a first payment that was asked for (`payment.amount`)
+ * but does not always report it in `amounts[]` (seen on production,
+ * 2026-10-05), so a SUCCESS with no payable amount is recorded as the amount
+ * asked for. An amount Bonum does report wins.
+ */
 async function cardSaved(ctx: ServiceContext, setup: CardSetup, body: Body): Promise<WebhookResult> {
 	const base = { projectId: setup.projectId, subjectType: 'card' as const, subjectId: setup.id };
 	const token = str(body.token);
 	if (!token) {
-		await note(ctx, { ...base, kind: 'bonum.card_token.no_token', summary: 'Bonum reported a card without a token' });
+		await note(ctx, {
+			...base,
+			kind: 'bonum.card_token.no_token',
+			summary:
+				setup.paymentAmount !== null
+					? `Bonum reported a card without a token. It may have taken the first payment of ${setup.paymentAmount} MNT`
+					: 'Bonum reported a card without a token'
+		});
 		return 'ignored';
 	}
 	const raw = cardTokenAmount(body);
-	const amount = raw === null || isVerificationCharge(raw) ? 0 : mnt(raw);
-	if (amount === null) {
+	const reported = raw === null || isVerificationCharge(raw) ? 0 : mnt(raw);
+	if (reported === null) {
 		await note(ctx, { ...base, kind: 'bonum.card_token.bad_amount', summary: 'The first payment had an unreadable amount' });
 	}
-	if (setup.paymentAmount !== null && amount !== setup.paymentAmount) {
-		// What Bonum did report, so a first payment it describes differently can be read later.
+	const asked = setup.paymentAmount;
+	const assumed = asked !== null && !reported;
+	if (asked !== null && reported !== asked) {
+		// What Bonum did report, so a first payment it describes differently can be read.
 		await note(ctx, { ...base, kind: 'bonum.card_token.reported', summary: reportedShape(body) });
 	}
 	const result = await saveCard(ctx, setup, {
@@ -290,7 +310,8 @@ async function cardSaved(ctx: ServiceContext, setup: CardSetup, body: Body): Pro
 		mask: str(body.mask).slice(0, 32) || '****',
 		expiry: str(body.expiry).slice(0, 16) || null,
 		bankName: str(obj(body.bank)?.name).slice(0, 100) || null,
-		paidAmount: amount ?? 0
+		paidAmount: assumed ? asked : (reported ?? 0),
+		amountAssumed: assumed
 	});
 	return result === 'saved' ? 'processed' : 'duplicate';
 }

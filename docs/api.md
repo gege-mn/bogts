@@ -366,6 +366,10 @@ the card is saved and reported as an ordinary [charge](#charges)
 (`charge.succeeded`, with your `reference`); `card.saved` carries its
 `chargeId`. If the customer gives up, nothing is charged and no card is saved.
 
+A card still `pending` 24 hours after it was started becomes `failed`, with
+`card.failed`. If Bonum reports the card after that, it is saved all the same
+and you get `card.saved`.
+
 ### Retrieve a card
 
 `GET /v1/cards/:id` → `200` with the card.
@@ -382,13 +386,16 @@ listed; read it by id.
 **new** card, `pending`, for the same customer. Send the customer to its
 `redirectUrl`. The old card keeps working until the new one is saved; then the
 old one becomes `removed` and you get `card.replaced` with both ids. If the
-customer gives up, the old card stays in place.
+customer gives up, the old card stays in place. As with removal, a charge made
+on the old card can no longer be reversed through Bogts once it is replaced.
 
 ### Remove a card
 
 `DELETE /v1/cards/:id` → `200` with the card, now `removed`, and a
 `card.removed` event. Bogts deletes the token, so the card can't be charged
 again. A charge already made on it can no longer be reversed through Bogts.
+A card that is still `pending` or `failed` has nothing to remove: the answer
+is `409 conflict`.
 
 A card that a [subscription](#subscriptions) bills can't be removed or
 replaced here (`409 conflict`): cancel the subscription, or use its own card
@@ -462,6 +469,8 @@ must not be blind either.
 `POST /v1/charges/:id/reverse` (no body) → `200` with the charge, now
 `reversed`, and a `charge.reversed` event. Only a `succeeded` charge can be
 reversed. If Bonum doesn't confirm, the answer is `502 provider_error`.
+Bonum has refused to reverse the first payment taken while a card was saved;
+refund such a payment through Bonum's merchant portal if that happens.
 
 ## Events
 

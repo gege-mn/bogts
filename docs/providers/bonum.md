@@ -69,7 +69,7 @@ minted at, and each sample's local time is that plus 8 hours (for example
 
 | Bonum `type` | What Bogts does |
 |---|---|
-| `CARD-TOKEN` | Matched by its `transactionId`. For a subscription: activates it and records the first charge (`subscription.active`), or completes a card replacement (`subscription.card_changed`). For a saved card: saves it (`card.saved` or `card.replaced`) and records a first payment as a charge (`charge.succeeded`). The 0.01 MNT card check is not counted as money. |
+| `CARD-TOKEN` | Matched by its `transactionId`. For a subscription: activates it and records the first charge (`subscription.active`), or completes a card replacement (`subscription.card_changed`). For a saved card: saves it (`card.saved` or `card.replaced`) and records a first payment as a charge (`charge.succeeded`), at the amount asked for when the message doesn't report one. The 0.01 MNT card check is not counted as money. |
 | `SUBSCRIPTION-PAYMENT` | A renewal (`subscription.renewed`) or a failed renewal (`subscription.payment_failed`). **Keyed on `invoiceId`**, never on `transactionId`, which is the same on every renewal, and also on the **billing period** the charge pays for, so a renewal already credited by reconciliation is not credited again. A success that falls well before the known `nextBillAt` is the first charge echoed back, and it is not credited twice. A failure for a period already paid is ignored. |
 | `UNSUBSCRIBED` | Bonum's retries ran out and it ended the mandate. The subscription is cancelled with `reason: "retries_exhausted"`, the card token is dropped, and the customer can subscribe again. |
 | `PAYMENT` | A hosted invoice was paid, failed or expired. |
@@ -132,17 +132,24 @@ What the sandbox showed (smoke tests against staging, 2026-09-25):
   registered, so its webhooks never reach you. To test webhooks, ask Bonum for
   your own sandbox terminal and register `${PUBLIC_ORIGIN}/hooks/bonum` on it.
 
-**Still to confirm with a real card** (tokenization can't be completed on the
-sandbox), for saved cards with no plan:
+What a real card showed on production (2026-10-05 and 2026-10-06), for saved
+cards with no plan:
 
-- the `CARD-TOKEN` message of a tokenization with no `subscription`: Bogts
-  reads `token`, `mask`, `expiry`, `bank.name`, `transactionId` and
-  `amounts[]`, and expects no `subscriptions[]`;
-- that a first payment (`payment.amount`) is reported in `amounts[]` as the
-  amount asked for;
-- whether Rollback Purchase can reverse that first payment, using the
-  tokenization's `transactionId`. `POST /v1/charges/:id/reverse` tries it and
-  answers `502 provider_error` if Bonum refuses.
+- The `CARD-TOKEN` message of a tokenization with no `subscription` carries
+  `token`, `mask`, `expiry`, `bank.name` and `transactionId`, as Bogts reads
+  them.
+- Purchase and Rollback Purchase work on such a token: a 500 MNT charge
+  succeeded at once and was reversed.
+- A first payment (`payment.amount`) **is taken, but was not reported** as the
+  amount asked for in the `amounts[]` Bogts read. So a successful `CARD-TOKEN`
+  for a card step that asked for a payment is recorded as that amount unless
+  Bonum reports a different payable one, and the card's timeline says the
+  amount was assumed, with the field names and amounts Bonum did send.
+- Rollback Purchase **refused** that first payment (HTTP 400), using the
+  tokenization's `transactionId`. `POST /v1/charges/:id/reverse` still tries
+  it and answers `502 provider_error` when Bonum refuses. That test ran while
+  Purchase was also failing on Bonum's side (HTTP 400, bank code 99), so it
+  is worth one more try.
 
 **Still to confirm on the sandbox:** whether a `payNow` tokenization also sends
 a `SUBSCRIPTION-PAYMENT` for the first charge. Bogts guards against it either

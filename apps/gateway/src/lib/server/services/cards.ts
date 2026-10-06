@@ -8,20 +8,27 @@
  * created by the CARD-TOKEN webhook (`saveCard`, called from
  * `providers/bonum/webhook.ts`) under the same id, so the id a project gets
  * at once is the card's id for good. A first payment (`payment`) is taken by
- * Bonum in the same step and becomes an ordinary succeeded charge; without one
- * Bonum takes its 0.01 MNT check, which is not money.
+ * Bonum in the same step and becomes an ordinary succeeded charge, whether or
+ * not Bonum's message repeats the amount; without one Bonum takes its
+ * 0.01 MNT check, which is not money.
+ *
+ * A card step the customer never finishes is ended after `CARD_STEP_TTL_MS`
+ * (`expireCardSteps`, from the cron sweep).
  *
  * A customer can have several cards. Replacing one saves a new card (a new
  * id) and removes the old one only once the new one is in. The token is
  * encrypted at rest and never leaves the gateway.
  */
-import { and, desc, eq, inArray, lt, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, lte, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { recordActivity } from '../activity';
 import { ApiError, notFound } from '../api/errors';
 import { encrypt } from '../crypto';
+import type { DB } from '../db';
+import type { Config } from '../env';
 import { eventInserts, type CardEventData } from '../events/emit';
 import { newId } from '../ids';
+import { isValidAmount } from '../money';
 import {
 	card as cardTable,
 	cardSetup,
@@ -193,6 +200,9 @@ async function startSetup(
 ): Promise<CardJson> {
 	bonumConfigOf(ctx);
 	const price = input.payment ? priceOf(input.payment, 'payment.') : null;
+	if (price && !isValidAmount(price.amount)) {
+		throw new ApiError(400, 'invalid_request', 'payment.amount: must be a positive whole number of MNT');
+	}
 	const now = nowOf(ctx);
 	const id = newId();
 	const row: CardSetup = {
@@ -267,6 +277,32 @@ export async function failSetup(ctx: ServiceContext, setup: CardSetup): Promise<
 	return true;
 }
 
+/**
+ * A card step still `pending` this long after it was started is ended as
+ * failed (`card.failed`). If Bonum reports the card afterwards it is saved all
+ * the same (`saveCard`).
+ */
+export const CARD_STEP_TTL_MS = 24 * 60 * 60 * 1000;
+export const CARD_STEP_BATCH = 100;
+
+/** Ends abandoned card steps (from the cron sweep). Returns how many it ended. */
+export async function expireCardSteps(db: DB, config: Config, now: number): Promise<number> {
+	const ctx: ServiceContext = { db, config, now };
+	const due = await db
+		.select()
+		.from(cardSetup)
+		.where(and(eq(cardSetup.status, 'pending'), lte(cardSetup.createdAt, now - CARD_STEP_TTL_MS)))
+		.orderBy(asc(cardSetup.createdAt))
+		.limit(CARD_STEP_BATCH);
+	let ended = 0;
+	for (const setup of due) {
+		if (!(await failSetup(ctx, setup))) continue;
+		ended++;
+		await note(ctx, setup.projectId, setup.id, 'card.step_expired', 'The customer did not finish the card step in time', 'gateway');
+	}
+	return ended;
+}
+
 /** What Bonum's CARD-TOKEN said about the card it saved. */
 export type SavedCardDetails = {
 	token: string;
@@ -275,6 +311,8 @@ export type SavedCardDetails = {
 	bankName: string | null;
 	/** Integer MNT Bonum took with the card step; 0 for the 0.01 MNT check or none */
 	paidAmount: number;
+	/** Bonum reported no payable amount, so `paidAmount` is the amount the step asked for */
+	amountAssumed?: boolean;
 };
 
 /**
@@ -393,7 +431,15 @@ export async function saveCard(ctx: ServiceContext, setup: CardSetup, details: S
 		'bonum.card_token.saved',
 		paid ? `Card saved and a first payment of ${details.paidAmount} MNT taken` : 'Card saved'
 	);
-	if (setup.paymentAmount !== null && details.paidAmount !== setup.paymentAmount) {
+	if (details.amountAssumed) {
+		await note(
+			ctx,
+			setup.projectId,
+			setup.id,
+			'bonum.card_token.amount_assumed',
+			`Bonum did not report the first payment's amount; recorded the ${details.paidAmount} MNT asked for`
+		);
+	} else if (setup.paymentAmount !== null && details.paidAmount !== setup.paymentAmount) {
 		await note(
 			ctx,
 			setup.projectId,

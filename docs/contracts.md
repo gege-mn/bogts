@@ -24,8 +24,8 @@ rewrites the `main` its config names.
 **No Cloudflare Queues:** the Deploy button must work on the free plan.
 - **Event delivery:** the first attempt runs inline via `ctx.waitUntil`. A cron
   runs every minute (`* * * * *`) and retries due deliveries with backoff.
-- **Jobs on that one cron** (`cron.ts`): deliver every minute; sweep, then
-  late_check, every 10 min (`minute % 10 === 0`); reconcile hourly at :05;
+- **Jobs on that one cron** (`cron.ts`): deliver every minute; sweep (which also
+  ends abandoned card steps), then late_check, every 10 min (`minute % 10 === 0`); reconcile hourly at :05;
   purge hourly at :00.
 
 ## Layout (`apps/gateway/src/lib/server/`)
