@@ -48,6 +48,7 @@ Measured with a simulated 5 ms round trip, including the layout:
 | `invoice_sweep_idx (status, expires_at) where swept_at is null` | Sweep: pending invoices past expiry (unchanged) |
 | `invoice_sweep_claimed_idx (status, swept_at) where swept_at is not null` | Sweep: stale claims (previously a full scan every 10 minutes) |
 | `invoice_late_check_idx` | QPay late check (unchanged) |
+| `card_setup_pending_idx (created_at) where status = 'pending'` | Cron: abandoned card steps (migration `0009_card_setup_pending`) |
 | `charge_project_id_idx (project_id, id)` | Charges list, `GET /v1/charges` |
 | `charge_reference_idx (reference, project_id)` | Global search, per-project reference |
 | `charge_status_created_idx (status, created_at)` | Overview: charges stuck pending, finished charges in the period, status tiles |

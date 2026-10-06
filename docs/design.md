@@ -51,8 +51,9 @@ each provider.
 - `POST /v1/subscriptions` takes `{ plan, customerRef, email?, returnUrl }` and returns `{ id, redirectUrl }`.
 - `DELETE /v1/subscriptions/:id` cancels a subscription.
 - `POST /v1/subscriptions/:id/card` starts a card replacement and returns `{ redirectUrl }`.
-- `POST /v1/charges` charges a saved card. It takes `{ subscriptionId, amount, reference }` and charges that subscription's card. `POST /v1/charges/:id/reverse` reverses it.
-- `GET /v1/invoices/:id`, `GET /v1/subscriptions/:id` and `GET /v1/charges/:id` read state.
+- `POST /v1/cards` takes `{ customerRef, returnUrl, payment? }`, saves a card with no plan and returns `{ id, redirectUrl }`. `POST /v1/cards/:id/replace` and `DELETE /v1/cards/:id` replace and remove it.
+- `POST /v1/charges` charges a saved card. It takes `{ cardId | subscriptionId, amount | items, reference }` and charges that card, or that subscription's card. `POST /v1/charges/:id/reverse` reverses it.
+- `GET /v1/invoices/:id`, `GET /v1/subscriptions/:id`, `GET /v1/cards/:id` and `GET /v1/charges/:id` read state.
 - `GET /v1/events?after=<id>` is the event feed, for a project to reconcile after an outage.
 - Provider webhooks arrive at `POST /hooks/bonum` and `POST /hooks/qpay/:invoiceId`.
 
@@ -83,6 +84,9 @@ they apply (`docs/webhooks.md`).
 - **Bonum:** its status endpoint is test-only, so the invoice is marked expired
   locally, 2 h after `expiresAt` so Bonum's webhook retries can land.
 
+The same run ends card steps (`card_setup`) still pending 24 hours after they
+were started, with `card.failed`. A card Bonum reports after that is still saved.
+
 **Renewal reconciliation:** hourly, a subscription whose renewal is over 6 h
 overdue is looked up at Bonum and credited, cancelled or marked past due. A
 renewal is deduplicated by its billing period, so the reconciled credit and a
@@ -106,6 +110,7 @@ deploy never runs open.
 - `invoice`: provider, amount, reference, status, expiresAt, sweptAt, provider ids
 - `subscription`: project, plan, customerRef, status, provider subscription id, card id, nextBillAt
 - `card`: encrypted token, mask, bank, expiry
+- `card_setup`: a card step for a card with no plan (customerRef, status, first payment); its id becomes the card's
 - `charge`: card, amount, reference, status
 - `ledger`: provider payment ref (unique), for applying each payment once
 - `provider_token`: the Bonum and QPay access-token cache

@@ -281,6 +281,7 @@ async function cardToken(ctx: ServiceContext, body: Body, success: boolean): Pro
  * asked for. An amount Bonum does report wins.
  */
 async function cardSaved(ctx: ServiceContext, setup: CardSetup, body: Body): Promise<WebhookResult> {
+	if (setup.status === 'completed') return 'duplicate';
 	const base = { projectId: setup.projectId, subjectType: 'card' as const, subjectId: setup.id };
 	const token = str(body.token);
 	if (!token) {

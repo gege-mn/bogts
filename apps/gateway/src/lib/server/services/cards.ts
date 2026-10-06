@@ -255,6 +255,13 @@ async function startSetup(
 export async function failSetup(ctx: ServiceContext, setup: CardSetup): Promise<boolean> {
 	if (setup.status !== 'pending') return false;
 	const now = nowOf(ctx);
+	// Only the caller that ends the step emits: a card saved a moment ago is not failed.
+	const ended = await ctx.db
+		.update(cardSetup)
+		.set({ status: 'failed', followUpLink: null, updatedAt: now })
+		.where(and(eq(cardSetup.id, setup.id), eq(cardSetup.status, 'pending')))
+		.returning({ id: cardSetup.id });
+	if (ended.length !== 1) return false;
 	const dedupeKey = `card.failed:${setup.id}`;
 	const data: CardEventData = { cardId: setup.id, customerRef: setup.customerRef, reason: 'checkout_failed' };
 	const { statements } = eventInserts(
@@ -263,13 +270,7 @@ export async function failSetup(ctx: ServiceContext, setup: CardSetup): Promise<
 		now
 	);
 	try {
-		await ctx.db.batch([
-			ctx.db
-				.update(cardSetup)
-				.set({ status: 'failed', followUpLink: null, updatedAt: now })
-				.where(and(eq(cardSetup.id, setup.id), eq(cardSetup.status, 'pending'))),
-			...statements
-		]);
+		await ctx.db.batch(statements);
 	} catch (err) {
 		if (await eventExists(ctx, dedupeKey)) return false;
 		throw err;
@@ -296,9 +297,13 @@ export async function expireCardSteps(db: DB, config: Config, now: number): Prom
 		.limit(CARD_STEP_BATCH);
 	let ended = 0;
 	for (const setup of due) {
-		if (!(await failSetup(ctx, setup))) continue;
-		ended++;
-		await note(ctx, setup.projectId, setup.id, 'card.step_expired', 'The customer did not finish the card step in time', 'gateway');
+		try {
+			if (!(await failSetup(ctx, setup))) continue;
+			ended++;
+			await note(ctx, setup.projectId, setup.id, 'card.step_expired', 'The customer did not finish the card step in time', 'gateway');
+		} catch (err) {
+			console.error('[cards] step expiry failed', err instanceof Error ? err.name : typeof err);
+		}
 	}
 	return ended;
 }
