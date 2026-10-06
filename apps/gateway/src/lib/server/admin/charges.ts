@@ -104,6 +104,7 @@ export async function getChargeDetail(db: DB, id: string) {
 		charge: {
 			id: c.id,
 			amount: c.amount,
+			items: c.items,
 			status: c.status,
 			reference: c.reference,
 			subscriptionId: c.subscriptionId,

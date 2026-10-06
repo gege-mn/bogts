@@ -7,6 +7,7 @@ Everything here is also available, typed, through
 - [Conventions](#conventions): auth, idempotency, errors, pagination, formats
 - [Invoices](#invoices)
 - [Subscriptions](#subscriptions)
+- [Cards](#cards)
 - [Charges](#charges)
 - [Events](#events)
 - [Other endpoints](#other-endpoints)
@@ -91,6 +92,13 @@ on the last page.
   creation time, such as `01K5X9M3QF2ZB7N8R4T6VWXY0C`.
 - **Amounts** are integers in MNT (`49900` is ₮49,900). `currency` is always
   `"MNT"`.
+- **Line items.** Wherever a request takes `amount`, it takes `items` in its
+  place: lines `{ "label", "amount", "quantity" }` that Bogts adds up
+  (`amount * quantity`, with `quantity` 1 when omitted). A discount is a line
+  with a negative amount. Send `amount` or `items`, never both. There can be up
+  to 50 lines, no line may be 0, and the total must be at least 1. The lines
+  come back on the object and in its events as `items` (`null` for a plain
+  amount). Bogts stores and reports them; it makes no pricing decisions.
 - **Times** are ISO-8601 UTC strings, such as `2026-09-25T14:05:32.000Z`.
 - Every response has `Cache-Control: no-store`.
 
@@ -123,13 +131,14 @@ SonoShop on Bonum's page.
   "expiresAt": "2026-09-25T14:35:32.000Z",
   "paidAt": null,
   "metadata": { "cart": "c_981" },
+  "items": null,
   "createdAt": "2026-09-25T14:05:32.000Z"
 }
 ```
 
 | Field | |
 |---|---|
-| `status` | `pending`, `paid`, `expired`, `failed` or `cancelled`. Only `pending` can change, except that money arriving late still turns an `expired` or `cancelled` invoice into `paid`. When one invoice is paid, the project's other pending invoices for the same purchase (identical `reference`, `provider`, `amount`, `description`, `returnUrl` and `metadata`) become `cancelled` (with no event); a QPay one only once QPay confirms the cancel, else it stays `pending` until its expiry check. |
+| `status` | `pending`, `paid`, `expired`, `failed` or `cancelled`. Only `pending` can change, except that money arriving late still turns an `expired` or `cancelled` invoice into `paid`. When one invoice is paid, the project's other pending invoices for the same purchase (identical `reference`, `provider`, `amount`, `description`, `returnUrl`, `metadata` and `items`) become `cancelled` (with no event); a QPay one only once QPay confirms the cancel, else it stays `pending` until its expiry check. |
 | `payUrl` | Where to send the payer. For QPay it is Bogts' hosted page `/pay/:id`, and for Bonum it is Bonum's checkout. |
 | `redirectUrl` | Bonum's checkout URL, and `null` for QPay. |
 | `qr` | QPay only. `text` is the QR payload and `image` is a base64 PNG (it may be `null`). |
@@ -147,8 +156,8 @@ SonoShop on Bonum's page.
 
 **One purchase, one invoice.** If the project already has a `pending` invoice
 for the same purchase, that is, with the same `reference`, `provider`,
-`amount`, `description`, `returnUrl` and `metadata` (compared as JSON with key
-order ignored; no metadata equals `{}`), that has at least a minute left
+`amount`, `description`, `returnUrl`, `metadata` (compared as JSON with key
+order ignored; no metadata equals `{}`) and `items`, that has at least a minute left
 before `expiresAt`, Bogts answers `200` with **that** invoice instead of
 creating another, so a payer who clicks "Pay" twice sees the same QR and can't
 pay twice. It is returned as it is (`expiresIn` is ignored). A request that
@@ -164,7 +173,8 @@ result of `invoices.create`.
 | Field | Type | |
 |---|---|---|
 | `provider` | `"qpay"` or `"bonum"` | required |
-| `amount` | integer MNT, at least 1 | required |
+| `amount` | integer MNT, at least 1 | required, unless you send `items` |
+| `items` | [line items](#formats) | in place of `amount`. The payer's page shows the total. |
 | `reference` | string, 1 to 255 characters | required. Your own id, such as an order number. It comes back in every event. |
 | `description` | string, 1 to 255 characters | required. The payer sees it. |
 | `returnUrl` | `http(s)` URL | optional |
@@ -298,10 +308,103 @@ whose `redirectUrl` is now Bonum's card page. Send the customer there. When the
 new card is saved you get `subscription.card_changed`. If the customer gives up,
 the old card stays in place.
 
+## Cards
+
+A card saved with no Bonum plan behind it. The customer enters it on Bonum's
+page; Bogts keeps the token and charges it only when you [create a
+charge](#create-a-charge), for any amount. A customer can have several cards.
+Cards belong to one project: the same `customerRef` in another project is a
+different customer with its own cards.
+
+### The card object
+
+```json
+{
+  "id": "01K5XA3P0Q2R4S6T8V0W2X4Y6Z",
+  "object": "card",
+  "customerRef": "user_123",
+  "status": "active",
+  "redirectUrl": null,
+  "mask": "5150 23** **** 4778",
+  "expiry": "2026/11",
+  "bank": "Голомт банк",
+  "createdAt": "2026-09-25T14:08:12.000Z"
+}
+```
+
+| Field | |
+|---|---|
+| `status` | `pending` (waiting for the customer on Bonum's page), `failed` (the card step didn't complete), `active` or `removed`. |
+| `redirectUrl` | Bonum's card page. It is set only while the card is `pending`. |
+| `mask`, `expiry`, `bank` | Display details, `null` until the card is saved. The card token itself never leaves Bogts. |
+
+### Save a card
+
+`POST /v1/cards` → `201` with the card, `status: "pending"`. Send the customer
+to its `redirectUrl`. Afterwards Bonum sends them back through Bogts to your
+`returnUrl`, with `?card=<id>` added. That redirect says nothing about the
+outcome: wait for `card.saved` or `card.failed`, or read the card. The id you
+get here stays the card's id.
+
+| Field | Type | |
+|---|---|---|
+| `customerRef` | string, up to 128 characters | required. Your id for the customer. |
+| `returnUrl` | `https` URL | required. Where the customer lands afterwards. |
+| `payment` | object | optional. A first payment taken in the same step: `{ "reference", "amount" }`, or `items` in place of `amount`. |
+
+```sh
+curl https://pay.example.com/v1/cards \
+  -H "Authorization: Bearer $BOGTS_API_KEY" \
+  -H "Idempotency-Key: card-user_123-1" \
+  -H "Content-Type: application/json" \
+  -d '{"customerRef":"user_123","returnUrl":"https://app.example.com/billing","payment":{"reference":"order-42","items":[{"label":"Pro, first month","amount":49900},{"label":"Launch discount","amount":-10000}]}}'
+```
+
+Without `payment`, nothing is charged: Bonum takes 0.01 MNT to check the card,
+which Bogts does not count as money. With `payment`, the amount is charged when
+the card is saved and reported as an ordinary [charge](#charges)
+(`charge.succeeded`, with your `reference`); `card.saved` carries its
+`chargeId`. If the customer gives up, nothing is charged and no card is saved.
+
+A card still `pending` 24 hours after it was started becomes `failed`, with
+`card.failed`. If Bonum reports the card after that, it is saved all the same
+and you get `card.saved`.
+
+### Retrieve a card
+
+`GET /v1/cards/:id` → `200` with the card.
+
+### List cards
+
+`GET /v1/cards` → saved cards, newest first. Filters: `?customerRef=` and
+`?status=` (`active` or `removed`). A card still `pending` or `failed` is not
+listed; read it by id.
+
+### Replace a card
+
+`POST /v1/cards/:id/replace` with `{ "returnUrl": "…" }` → `201` with a
+**new** card, `pending`, for the same customer. Send the customer to its
+`redirectUrl`. The old card keeps working until the new one is saved; then the
+old one becomes `removed` and you get `card.replaced` with both ids. If the
+customer gives up, the old card stays in place. As with removal, a charge made
+on the old card can no longer be reversed through Bogts once it is replaced.
+
+### Remove a card
+
+`DELETE /v1/cards/:id` → `200` with the card, now `removed`, and a
+`card.removed` event. Bogts deletes the token, so the card can't be charged
+again. A charge already made on it can no longer be reversed through Bogts.
+A card that is still `pending` or `failed` has nothing to remove: the answer
+is `409 conflict`.
+
+A card that a [subscription](#subscriptions) bills can't be removed or
+replaced here (`409 conflict`): cancel the subscription, or use its own card
+replacement.
+
 ## Charges
 
-A one-off charge to a subscription's saved card, for example a top-up or an
-overage.
+A charge to a saved card, for any amount: a [card](#cards) named by `cardId`,
+or a subscription's card named by `subscriptionId`.
 
 ### The charge object
 
@@ -313,7 +416,9 @@ overage.
   "amount": 5000,
   "currency": "MNT",
   "reference": "topup-7",
-  "subscriptionId": "01K5XA2N8C4H6J7K9M1P3Q5R7S",
+  "cardId": "01K5XA3P0Q2R4S6T8V0W2X4Y6Z",
+  "subscriptionId": null,
+  "items": null,
   "failureCode": null,
   "createdAt": "2026-09-26T09:00:00.000Z"
 }
@@ -330,8 +435,10 @@ overage.
 
 | Field | Type | |
 |---|---|---|
-| `subscriptionId` | string | required. The subscription whose card to charge. |
-| `amount` | integer MNT, at least 1 | required |
+| `cardId` | string | The card to charge. Send this or `subscriptionId`. |
+| `subscriptionId` | string | The subscription whose card to charge. Send this or `cardId`. |
+| `amount` | integer MNT, at least 1 | required, unless you send `items` |
+| `items` | [line items](#formats) | in place of `amount` |
 | `reference` | string, up to 128 characters | required |
 
 ```sh
@@ -339,7 +446,7 @@ curl https://pay.example.com/v1/charges \
   -H "Authorization: Bearer $BOGTS_API_KEY" \
   -H "Idempotency-Key: topup-7" \
   -H "Content-Type: application/json" \
-  -d '{"subscriptionId":"01K5XA2N8C4H6J7K9M1P3Q5R7S","amount":5000,"reference":"topup-7"}'
+  -d '{"cardId":"01K5XA3P0Q2R4S6T8V0W2X4Y6Z","amount":5000,"reference":"topup-7"}'
 ```
 
 A charge can finish at once (`succeeded` or `failed`) or later (`queued`, or
@@ -354,14 +461,16 @@ must not be blind either.
 
 ### List charges
 
-`GET /v1/charges` → a list, newest first. Filters: `?subscriptionId=` and
-`?status=`.
+`GET /v1/charges` → a list, newest first. Filters: `?cardId=`,
+`?subscriptionId=` and `?status=`.
 
 ### Reverse a charge
 
 `POST /v1/charges/:id/reverse` (no body) → `200` with the charge, now
 `reversed`, and a `charge.reversed` event. Only a `succeeded` charge can be
 reversed. If Bonum doesn't confirm, the answer is `502 provider_error`.
+Bonum has refused to reverse the first payment taken while a card was saved;
+refund such a payment through Bonum's merchant portal if that happens.
 
 ## Events
 
@@ -423,5 +532,6 @@ These are not part of the project API, but they are public:
 | `GET /pay/:invoiceId/status` | `{ status, paidAt, returnUrl }`, which is what the hosted page polls. While a QPay invoice is pending, it also asks QPay, at most once every 10 seconds per invoice, in case the callback is late. Limited to 240 requests per minute per client (an IPv4 address, or an IPv6 /64), since mobile carriers put many payers behind one address. |
 | `GET /return/:invoiceId` | Where Bonum sends the payer after a one-off card payment. It shows the result and, once the invoice is paid, returns them to the invoice's `returnUrl`. |
 | `GET /return/s/:subscriptionId` | Where Bonum sends the customer after the card step. It redirects to the subscription's `returnUrl` with `?subscription=<id>` added. |
+| `GET /return/c/:cardId` | Where Bonum sends the customer after saving a card. It redirects to the card's `returnUrl` with `?card=<id>` added. |
 | `POST /hooks/bonum` | Bonum's webhook. Register it in Bonum's portal. |
 | `GET` or `POST /hooks/qpay/:invoiceId` | QPay's callback, set per invoice automatically. |

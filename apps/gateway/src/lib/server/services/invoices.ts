@@ -14,7 +14,6 @@ import { z } from 'zod';
 import { recordActivity } from '../activity';
 import { ApiError, describeZodError, notFound } from '../api/errors';
 import type { Config } from '../env';
-import { MAX_AMOUNT } from '../money';
 import { QpayCallError } from '../providers/qpay/client';
 import { newId } from '../ids';
 import {
@@ -23,6 +22,7 @@ import {
 	invoice as invoiceTable,
 	type Deeplink,
 	type Invoice,
+	type LineItem,
 	type Metadata,
 	type Project,
 	type Provider
@@ -30,6 +30,7 @@ import {
 import { nowOf, type ServiceContext } from './context';
 import { cursorSchema } from './paging';
 import type { InvoiceAdapter } from './invoice-adapter';
+import { priceFields, priceOf } from './items';
 import { invoiceAdapters } from './invoice-adapters';
 import { purchaseWhere, samePurchase, type PurchaseFields } from './purchase';
 import { endInvoice, settleInvoice } from './settle';
@@ -49,7 +50,8 @@ const metadataSchema = z
 /** `POST /v1/invoices` body (docs/contracts.md). */
 export const createInvoiceSchema = z.object({
 	provider: z.enum(PROVIDERS),
-	amount: z.number().int().min(1).max(MAX_AMOUNT),
+	/** Send `amount`, or `items` (lines that add up to it; a discount is a negative line) */
+	...priceFields,
 	reference: z.string().trim().min(1).max(255),
 	description: z.string().trim().min(1).max(255),
 	returnUrl: z.url({ protocol: /^https?$/ }).max(2048).nullish(),
@@ -59,6 +61,8 @@ export const createInvoiceSchema = z.object({
 	reuse: z.boolean().default(true)
 });
 export type CreateInvoiceInput = z.input<typeof createInvoiceSchema>;
+/** The parsed body with its price worked out (`priceOf`). */
+type InvoiceData = Omit<z.output<typeof createInvoiceSchema>, 'amount' | 'items'> & { amount: number; items: LineItem[] | null };
 
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
@@ -88,6 +92,7 @@ export type InvoiceJson = {
 	expiresAt: string;
 	paidAt: string | null;
 	metadata: Metadata | null;
+	items: LineItem[] | null;
 	createdAt: string;
 };
 
@@ -118,6 +123,7 @@ export function invoiceJson(inv: Invoice, config: Config): InvoiceJson {
 		expiresAt: iso(inv.expiresAt),
 		paidAt: inv.paidAt === null ? null : iso(inv.paidAt),
 		metadata: inv.metadata ?? null,
+		items: inv.items ?? null,
 		createdAt: iso(inv.createdAt)
 	};
 }
@@ -144,12 +150,12 @@ const REUSE_CANDIDATES = 20;
 
 /**
  * The project's pending, unexpired invoice for the same purchase
- * (`samePurchase`: reference, provider, amount, description, returnUrl and
- * metadata all equal), if any: a second click on "Pay" should show the same
+ * (`samePurchase`: reference, provider, amount, description, returnUrl,
+ * metadata and items all equal), if any: a second click on "Pay" should show the same
  * QR, not a second invoice the payer might also pay. Only an invoice the
  * provider accepted (it has a provider id) is reused; the newest wins.
  */
-async function reusable(ctx: ServiceContext, projectId: string, data: z.output<typeof createInvoiceSchema>) {
+async function reusable(ctx: ServiceContext, projectId: string, data: InvoiceData) {
 	const wanted: PurchaseFields = {
 		projectId,
 		reference: data.reference,
@@ -157,7 +163,8 @@ async function reusable(ctx: ServiceContext, projectId: string, data: z.output<t
 		amount: data.amount,
 		description: data.description,
 		returnUrl: data.returnUrl ?? null,
-		metadata: data.metadata ?? null
+		metadata: data.metadata ?? null,
+		items: data.items
 	};
 	const rows = await ctx.db
 		.select()
@@ -189,7 +196,7 @@ export async function openInvoice(
 ): Promise<{ invoice: Invoice; reused: boolean }> {
 	const parsed = createInvoiceSchema.safeParse(input);
 	if (!parsed.success) throw new ApiError(400, 'invalid_request', describeZodError(parsed.error));
-	const data = parsed.data;
+	const data: InvoiceData = { ...parsed.data, ...priceOf(parsed.data) };
 	if (!ctx.config.providers[data.provider]) {
 		throw new ApiError(400, 'provider_disabled', `${data.provider === 'qpay' ? 'QPay' : 'Bonum'} is not enabled on this gateway`);
 	}
@@ -203,7 +210,7 @@ export async function openInvoice(
 async function insertAndCreate(
 	ctx: ServiceContext,
 	project: Pick<Project, 'id'>,
-	data: z.output<typeof createInvoiceSchema>
+	data: InvoiceData
 ): Promise<Invoice> {
 	const now = nowOf(ctx);
 	const id = newId();
@@ -220,6 +227,7 @@ async function insertAndCreate(
 			returnUrl: data.returnUrl ?? null,
 			expiresAt: now + data.expiresIn * 1000,
 			metadata: data.metadata ?? null,
+			items: data.items,
 			createdAt: now,
 			updatedAt: now
 		})

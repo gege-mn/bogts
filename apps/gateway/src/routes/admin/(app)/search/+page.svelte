@@ -5,13 +5,13 @@
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import Time from '$lib/components/Time.svelte';
 	import Title from '$lib/components/Title.svelte';
-	import { truncateEnd } from '$lib/format';
-	import { chargeStatus, invoiceStatus, subscriptionStatus } from '$lib/status';
+	import { formatCardMask, truncateEnd } from '$lib/format';
+	import { cardStatus, chargeStatus, invoiceStatus, subscriptionStatus } from '$lib/status';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 	const r = $derived(data.results);
-	const empty = $derived(!r || (r.invoices.length === 0 && r.charges.length === 0 && r.subscriptions.length === 0));
+	const empty = $derived(!r || (r.invoices.length === 0 && r.charges.length === 0 && r.subscriptions.length === 0 && r.cards.length === 0));
 </script>
 
 <Title title="Search" />
@@ -68,6 +68,23 @@
 								<span class="mono ref">{truncateEnd(s.customerRef)}</span>
 								<StatusBadge status={subscriptionStatus(s.status)} />
 								<span class="subtle when"><Time at={s.createdAt} /></span>
+							</a>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
+		{#if r.cards.length}
+			<section class="card">
+				<header><h2>Cards</h2></header>
+				<ul class="results">
+					{#each r.cards as c (c.id)}
+						<li>
+							<a href="/admin/cards/{c.id}">
+								<span class="mono">{formatCardMask(c.mask)}</span>
+								<StatusBadge status={cardStatus(c.status)} />
+								<span class="mono ref">{truncateEnd(c.customerRef)}</span>
+								<span class="subtle when"><Time at={c.createdAt} /></span>
 							</a>
 						</li>
 					{/each}

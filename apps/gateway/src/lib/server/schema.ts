@@ -29,6 +29,9 @@ export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 export const CARD_STATUSES = ['active', 'removed'] as const;
 export type CardStatus = (typeof CARD_STATUSES)[number];
 
+export const CARD_SETUP_STATUSES = ['pending', 'completed', 'failed'] as const;
+export type CardSetupStatus = (typeof CARD_SETUP_STATUSES)[number];
+
 export const SUBSCRIPTION_STATUSES = ['pending', 'active', 'past_due', 'cancelled', 'failed'] as const;
 export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
 
@@ -43,6 +46,13 @@ export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 
 /** A bank app link on a QPay invoice (QPay's `urls[]`). */
 export type Deeplink = { name: string; description?: string; logo?: string; link: string };
+
+/**
+ * One line of what a payment is for. `amount` is integer MNT per unit and is
+ * negative for a discount; the payment's `amount` is the sum of every line's
+ * `amount * quantity`. Echoed back, never interpreted.
+ */
+export type LineItem = { label: string; amount: number; quantity: number };
 
 /** Free-form key/value pairs a project attaches to an invoice. Echoed back, never interpreted. */
 export type Metadata = Record<string, string>;
@@ -155,6 +165,8 @@ export const invoice = sqliteTable(
 		lateCheckedAt: integer('late_checked_at'),
 		paidAt: integer('paid_at'),
 		metadata: text('metadata', { mode: 'json' }).$type<Metadata>(),
+		/** The lines `amount` is the sum of, when the project sent `items`; null for a plain amount */
+		items: text('items', { mode: 'json' }).$type<LineItem[]>(),
 		/* e-barimt: reserved for a later version, unused in v1 */
 		ebarimtStatus: text('ebarimt_status'),
 		ebarimtReceiptId: text('ebarimt_receipt_id'),
@@ -210,6 +222,40 @@ export const card = sqliteTable(
 	(t) => [index('card_project_customer_idx').on(t.projectId, t.customerRef)]
 );
 
+/**
+ * A request to save a card with no Bonum plan (`cards/tokenize/request` with
+ * no `subscription`). Its id is the `transactionId` sent to Bonum, so the
+ * CARD-TOKEN webhook finds it, and it becomes the id of the `card` row that
+ * webhook creates.
+ */
+export const cardSetup = sqliteTable(
+	'card_setup',
+	{
+		id: text('id').primaryKey(),
+		projectId: text('project_id')
+			.notNull()
+			.references(() => project.id),
+		customerRef: text('customer_ref').notNull(),
+		status: text('status', { enum: CARD_SETUP_STATUSES }).notNull().default('pending'),
+		/** Bonum's card page, while pending */
+		followUpLink: text('follow_up_link'),
+		returnUrl: text('return_url').notNull(),
+		/** The card this one replaces: removed when this one is saved */
+		replacesCardId: text('replaces_card_id').references(() => card.id),
+		/** The first payment taken with the card step (`payment.amount`); null = Bonum's 0.01 MNT check only */
+		paymentAmount: integer('payment_amount'),
+		paymentReference: text('payment_reference'),
+		paymentItems: text('payment_items', { mode: 'json' }).$type<LineItem[]>(),
+		createdAt: integer('created_at').notNull(),
+		updatedAt: integer('updated_at').notNull()
+	},
+	(t) => [
+		index('card_setup_project_customer_idx').on(t.projectId, t.customerRef),
+		// The cron's expiry of abandoned card steps.
+		index('card_setup_pending_idx').on(t.createdAt).where(sql`${t.status} = 'pending'`)
+	]
+);
+
 /** A Bonum card mandate on a plan. */
 export const subscription = sqliteTable(
 	'subscription',
@@ -259,7 +305,7 @@ export const subscription = sqliteTable(
 	]
 );
 
-/** A one-off charge of a saved card (Bonum purchase). */
+/** A charge of a saved card (Bonum purchase, or the first payment of a card step). */
 export const charge = sqliteTable(
 	'charge',
 	{
@@ -272,6 +318,8 @@ export const charge = sqliteTable(
 			.references(() => card.id),
 		subscriptionId: text('subscription_id').references(() => subscription.id),
 		amount: integer('amount').notNull(),
+		/** The lines `amount` is the sum of, when the project sent `items`; null for a plain amount */
+		items: text('items', { mode: 'json' }).$type<LineItem[]>(),
 		reference: text('reference').notNull(),
 		/** Our merchant `transactionId` sent to purchase; TOKEN-PAYMENT and reverse use it */
 		providerTransactionId: text('provider_transaction_id').notNull().unique(),
@@ -507,7 +555,7 @@ export const auditLog = sqliteTable(
 	(t) => [index('audit_log_subject_idx').on(t.subject, t.createdAt)]
 );
 
-export const ACTIVITY_SUBJECT_TYPES = ['invoice', 'subscription', 'charge', 'provider'] as const;
+export const ACTIVITY_SUBJECT_TYPES = ['invoice', 'subscription', 'charge', 'card', 'provider'] as const;
 export type ActivitySubjectType = (typeof ACTIVITY_SUBJECT_TYPES)[number];
 export const ACTIVITY_SOURCES = ['provider', 'gateway', 'admin'] as const;
 export type ActivitySource = (typeof ACTIVITY_SOURCES)[number];
@@ -604,6 +652,7 @@ export type Invoice = typeof invoice.$inferSelect;
 export type NewInvoice = typeof invoice.$inferInsert;
 export type Card = typeof card.$inferSelect;
 export type NewCard = typeof card.$inferInsert;
+export type CardSetup = typeof cardSetup.$inferSelect;
 export type Subscription = typeof subscription.$inferSelect;
 export type NewSubscription = typeof subscription.$inferInsert;
 export type Charge = typeof charge.$inferSelect;

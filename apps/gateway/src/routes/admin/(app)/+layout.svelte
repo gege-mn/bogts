@@ -17,7 +17,8 @@
 		{ key: 'nav.overview', path: '/admin', icon: 'home', hotkey: 'o' },
 		{ key: 'nav.payments', path: '/admin/payments', icon: 'receipt', hotkey: 'p' },
 		{ key: 'nav.subscriptions', path: '/admin/subscriptions', icon: 'repeat', hotkey: 's' },
-		{ key: 'nav.charges', path: '/admin/charges', icon: 'card', hotkey: 'c' },
+		{ key: 'nav.charges', path: '/admin/charges', icon: 'coins', hotkey: 'c' },
+		{ key: 'nav.cards', path: '/admin/cards', icon: 'card', hotkey: 'd' },
 		{ key: 'nav.events', path: '/admin/events', icon: 'send', hotkey: 'e' }
 	];
 	const MORE: Item[] = [

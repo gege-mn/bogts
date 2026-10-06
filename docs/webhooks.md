@@ -48,6 +48,10 @@ Bogts reports facts. What a fact entitles your customer to is up to your app.
 | `charge.succeeded` | A saved-card charge went through. |
 | `charge.failed` | A saved-card charge was declined. `failureCode` says why. |
 | `charge.reversed` | A charge was reversed. |
+| `card.saved` | A card was saved. With `chargeId`, its first payment was taken too (that charge has its own `charge.succeeded`). |
+| `card.failed` | The card step didn't complete in time, or Bonum refused it. Nothing was charged. |
+| `card.replaced` | A replacement card was saved. `cardId` is the new card and `replacesCardId` the old one, now removed. |
+| `card.removed` | A card was removed and its token deleted. |
 
 ### `data` for `invoice.*`
 
@@ -63,7 +67,8 @@ Bogts reports facts. What a fact entitles your customer to is up to your app.
 }
 ```
 
-`paidAt` is present on `invoice.paid` only.
+`paidAt` is present on `invoice.paid` only. `items` is present when the
+invoice was created with [line items](api.md#formats).
 
 `duplicateOfInvoiceId` is present on `invoice.paid` only when another invoice
 of the project for the **same purchase** was paid first; it is that invoice's
@@ -112,7 +117,27 @@ The dashboard's Overview lists it under "Needs attention".
 ```
 
 `failureCode` is set on `charge.failed`. It is a short machine code, never
-provider text.
+provider text. `subscriptionId` is `null` for a charge made by `cardId`.
+`items` is present when the charge was created with
+[line items](api.md#formats).
+
+### `data` for `card.*`
+
+```json
+{
+  "cardId": "01K5XA3P0Q2R4S6T8V0W2X4Y6Z",
+  "customerRef": "user_123",
+  "cardMask": "5150 23** **** 4778",
+  "chargeId": "01K5XB7T2V4W6X8Y0Z1A3B5C7D"
+}
+```
+
+| Field | |
+|---|---|
+| `cardMask` | On `saved` and `replaced`. |
+| `chargeId` | On `saved`, when a first payment was taken with the card step. |
+| `replacesCardId` | On `replaced`: the old card. |
+| `reason` | On `failed`: `checkout_failed`. On `removed`: `removed_by_project` or `removed_by_admin`. |
 
 New event types may be added. Ignore types you don't know and answer 2xx.
 

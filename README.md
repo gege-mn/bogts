@@ -49,10 +49,11 @@ straight to your own merchant accounts. Bogts never holds funds.
   key, webhook URL, signing secret and plans.
 - **QPay invoices:** a QR, bank-app deeplinks and a hosted payment page.
 - **Bonum:** card subscriptions, the hosted All-in-one checkout (QPay, card,
-  WeChat, SonoShop), charges to a saved card, and reversals.
+  WeChat, SonoShop), saved cards you charge whenever you choose, for any
+  amount, and reversals.
 - **Facts, not entitlement.** Bogts reports paid, failed, renewed, cancelled
   and expired. Your app decides what a customer gets.
-- **Dashboard** at `/admin`: payments, subscriptions, events with re-delivery,
+- **Dashboard** at `/admin`: payments, subscriptions, cards, events with re-delivery,
   projects, plans and usage. It is protected by Cloudflare Access or a
   password, and it refuses to run with neither.
 - **Your brand on the payment pages:** company name, logo, accent colour and
@@ -105,7 +106,7 @@ client guide is in [packages/client/README.md](packages/client/README.md).
                                         │  cron      every minute: deliver + sweep    │
                                         └──────────────────┬──────────────────────────┘
                                                            ▼
-                                  D1: projects, invoices, subscriptions, charges,
+                                  D1: projects, invoices, subscriptions, cards, charges,
                                   encrypted card tokens, ledger, event outbox
 ```
 
@@ -120,6 +121,7 @@ event, so replays and retries are harmless.
 | One-off invoice: QR, deeplinks, hosted page | QPay | `POST /v1/invoices` with `provider: "qpay"` |
 | Hosted All-in-one checkout | Bonum | `POST /v1/invoices` with `provider: "bonum"` |
 | Card subscription: renewals, failures, cancel, card replacement | Bonum | `/v1/subscriptions` |
+| Save a card with no plan; replace or remove it | Bonum | `/v1/cards` |
 | Charge a saved card, and reverse it | Bonum | `/v1/charges` |
 
 ## Docs

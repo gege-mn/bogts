@@ -47,8 +47,20 @@ const sub = await bogts.subscriptions.create({
 	returnUrl: 'https://app.example.com/billing'
 });
 
+// A saved card with no plan: send the customer to `redirectUrl`, then wait for `card.saved`.
+const card = await bogts.cards.create({ customerRef: 'user_123', returnUrl: 'https://app.example.com/billing' });
+
+// Later, once `card.saved` has arrived for `card.id`:
 try {
-	await bogts.charges.create({ subscriptionId: sub.id, amount: 5_000, reference: 'topup-7' });
+	// Any amount, as `amount` or as `items` (a discount is a negative line).
+	await bogts.charges.create({
+		cardId: card.id,
+		items: [
+			{ label: 'Top-up', amount: 5_000 },
+			{ label: 'Loyalty discount', amount: -500 }
+		],
+		reference: 'topup-7'
+	});
 } catch (err) {
 	if (err instanceof BogtsError) console.log(err.status, err.code, err.message);
 }
@@ -58,6 +70,7 @@ try {
 |---|---|
 | `invoices` | `create`, `get`, `list`, `cancel` |
 | `subscriptions` | `create`, `get`, `list`, `cancel`, `replaceCard` |
+| `cards` | `create`, `get`, `list`, `replace`, `remove` |
 | `charges` | `create`, `get`, `list`, `reverse` |
 | `events` | `get`, `list`, `iterate` |
 

@@ -44,6 +44,7 @@ function eventData(inv: Invoice, paidAt?: number, duplicateOf?: string): Invoice
 		currency: 'MNT' as const,
 		...(paidAt !== undefined ? { paidAt } : {}),
 		metadata: inv.metadata ?? null,
+		...(inv.items ? { items: inv.items } : {}),
 		...(duplicateOf ? { duplicateOfInvoiceId: duplicateOf } : {})
 	};
 }

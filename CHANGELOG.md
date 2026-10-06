@@ -9,6 +9,27 @@ change the API; the notes will say how to upgrade.
 
 ### Added
 
+- **Saved cards** (`/v1/cards`): save a card for a `customerRef` with no Bonum
+  payment plan, with an optional first payment, and replace or remove it.
+  Bonum never charges such a card on its own. A customer can have several.
+  New events: `card.saved`, `card.failed`, `card.replaced`, `card.removed`.
+  A card step nobody finishes becomes `failed` after 24 hours. The customer
+  returns from Bonum through the new public route `GET /return/c/:cardId`.
+- **Charges by card**: `POST /v1/charges` takes `cardId` in place of
+  `subscriptionId`, for any amount. The charge object and `GET /v1/charges`
+  gained `cardId`.
+- **Line items**: invoices, charges and a card's first payment take `items`
+  (`{ label, amount, quantity }`) in place of `amount`. A discount is a line
+  with a negative amount. The lines come back on the object and in its events.
+  A pending invoice is reused only when its lines match too.
+- **Client (`@gege-mn/bogts`)**: `bogts.cards` (`create`, `get`, `list`,
+  `replace`, `remove`), `cardId` and `items` on charges, `items` on invoices,
+  and the `Card`, `LineItem` and `CardEventData` types.
+- **Dashboard: Cards.** A Cards page lists saved cards and card steps; a
+  card's page shows its charges, events and timeline, and can charge or remove
+  it. "Save a card" starts a card step from the dashboard. Payment and charge
+  pages show line items, and search finds cards by id or customer ref.
+  A declined charge's timeline keeps Bonum's payment id and trace id.
 - **`GET /v1/invoices/:id` re-checks QPay**: while a QPay invoice is pending
   and unexpired, reading it asks QPay (at most once per 10 s per invoice, the
   same allowance the hosted page's poll uses) and settles a payment it finds.

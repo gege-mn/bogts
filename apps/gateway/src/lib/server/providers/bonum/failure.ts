@@ -83,3 +83,21 @@ export function withFailure(sentence: string, body: Record<string, unknown>): st
 	const detail = describeFailure(body);
 	return detail ? `${sentence}. ${detail}` : sentence;
 }
+
+/**
+ * A refused Purchase, for the charge's timeline: the HTTP status and the safe
+ * codes of its `data`. The bank's response code is `data.respCode` when
+ * present, else the digits that end the answer's `errorCode`
+ * (`${invalid.bonum.response.56}`); that field is Bonum-internal, so it is
+ * only shown to the operator here and never decides anything. Bonum's
+ * `traceId` (hex only) and its own id of the payment follow, for asking Bonum
+ * about the call.
+ */
+export function describePurchaseRefusal(httpStatus: number, answer: unknown, data: Record<string, unknown>): string {
+	const a = answer && typeof answer === 'object' ? (answer as Record<string, unknown>) : {};
+	const tail = typeof a.errorCode === 'string' ? /\.(\d{1,3})\}?$/.exec(a.errorCode.trim())?.[1] : undefined;
+	const detail = describeFailure({ ...data, respCode: respCode(data.respCode) ?? tail });
+	const trace = typeof a.traceId === 'string' && /^[0-9a-f]{8,64}$/i.test(a.traceId) ? a.traceId : null;
+	const paymentId = typeof data.id === 'number' && Number.isSafeInteger(data.id) && data.id > 0 ? data.id : null;
+	return `HTTP ${httpStatus}${detail ? `. ${detail}` : ''}${paymentId ? `. Bonum payment ${paymentId}` : ''}${trace ? `, trace ${trace}` : ''}`;
+}

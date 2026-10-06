@@ -2,9 +2,10 @@
  * Bonum webhooks (already checksum-verified and parsed by `/hooks/bonum`).
  *
  *  - CARD-TOKEN: a tokenization finished. Matched by `transactionId` to a
- *    subscription's checkout (activate, and credit the `payNow` first charge)
- *    or to a pending card replacement (switch cards; the 0.01 MNT verification
- *    charge is not a payment).
+ *    subscription's checkout (activate, and credit the `payNow` first charge),
+ *    to a pending card replacement (switch cards; the 0.01 MNT verification
+ *    charge is not a payment), or to a plan-less card step (`card_setup`: save
+ *    the card, and record its first payment as a charge).
  *  - SUBSCRIPTION-PAYMENT: a renewal. The ledger key is `sub-invoice:<invoiceId>`,
  *    NEVER the `transactionId`, which is the tokenization id and is the same on
  *    every renewal (docs/providers/bonum-pitfalls.md #1). The row also carries the billing
@@ -32,15 +33,18 @@ import { newId } from '../../ids';
 import { isVerificationCharge, MoneyError, toMnt } from '../../money';
 import {
 	card as cardTable,
+	cardSetup,
 	charge as chargeTable,
 	event,
 	invoice as invoiceTable,
 	ledger,
 	plan as planTable,
 	subscription as subTable,
+	type CardSetup,
 	type Plan,
 	type Subscription
 } from '../../schema';
+import { failSetup, saveCard } from '../../services/cards';
 import { failCharge, succeedCharge } from '../../services/charges';
 import { nowOf, type ServiceContext } from '../../services/context';
 import { endInvoice, settleInvoice } from '../../services/settle';
@@ -172,11 +176,37 @@ async function mandateOf(ctx: ServiceContext, body: Body) {
 	);
 }
 
-/** The MNT amount in a CARD-TOKEN `amounts[]`, raw (so 0.01 can be told apart). */
+/**
+ * The MNT amount in a CARD-TOKEN `amounts[]`, raw (so 0.01 can be told apart).
+ * A payment is preferred over the 0.01 MNT check when both are listed.
+ */
 function cardTokenAmount(body: Body): number | string | null {
-	const entry = arr(body.amounts).find((a) => !a.currency || str(a.currency) === 'MNT');
-	const v = entry?.amount;
-	return typeof v === 'number' || typeof v === 'string' ? v : null;
+	const amounts = arr(body.amounts)
+		.filter((a) => !a.currency || str(a.currency) === 'MNT')
+		.map((a) => a.amount)
+		.filter((v): v is number | string => typeof v === 'number' || typeof v === 'string');
+	return amounts.find((v) => !isVerificationCharge(v)) ?? amounts[0] ?? null;
+}
+
+/**
+ * The shape of a CARD-TOKEN body, for the timeline: its field names and the
+ * `amounts` entries. Only names, numbers and currency codes; never a value
+ * of another field (the token is one of them).
+ */
+function reportedShape(body: Body): string {
+	const name = (k: string) => (/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(k) ? k : '?');
+	const amounts = Array.isArray(body.amounts)
+		? arr(body.amounts)
+				.slice(0, 5)
+				.map((a) =>
+					Object.entries(a)
+						.slice(0, 6)
+						.map(([k, v]) => `${name(k)} ${typeof v === 'number' ? v : typeof v === 'string' ? safe(v) : typeof v}`)
+						.join(', ')
+				)
+				.join('; ')
+		: `not a list (${typeof body.amounts})`;
+	return `Bonum reported amounts: ${amounts || 'none'}. Fields: ${Object.keys(body).slice(0, 30).map(name).join(', ')}`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -232,12 +262,71 @@ async function cardToken(ctx: ServiceContext, body: Body, success: boolean): Pro
 	}
 	if (replacing) return success ? cardReplaced(ctx, replacing, body, txn) : replacementFailed(ctx, replacing, body, txn);
 
+	const [setup] = txn ? await ctx.db.select().from(cardSetup).where(eq(cardSetup.id, txn)).limit(1) : [];
+	if (setup) return success ? cardSaved(ctx, setup, body) : cardStepFailed(ctx, setup, body);
+
 	await note(ctx, {
 		subjectType: 'provider',
 		kind: 'bonum.card_token.unknown',
 		summary: `Ignored a card token for an unknown transaction ${safe(txn)}`
 	});
 	return 'ignored';
+}
+
+/**
+ * A plan-less card step succeeded: the card is saved, and its first payment is
+ * a charge. Bonum takes a first payment that was asked for (`payment.amount`)
+ * but does not always report it in `amounts[]` (seen on production,
+ * 2026-10-05), so a SUCCESS with no payable amount is recorded as the amount
+ * asked for. An amount Bonum does report wins.
+ */
+async function cardSaved(ctx: ServiceContext, setup: CardSetup, body: Body): Promise<WebhookResult> {
+	const base = { projectId: setup.projectId, subjectType: 'card' as const, subjectId: setup.id };
+	const token = str(body.token);
+	if (!token) {
+		await note(ctx, {
+			...base,
+			kind: 'bonum.card_token.no_token',
+			summary:
+				setup.paymentAmount !== null
+					? `Bonum reported a card without a token. It may have taken the first payment of ${setup.paymentAmount} MNT`
+					: 'Bonum reported a card without a token'
+		});
+		return 'ignored';
+	}
+	const raw = cardTokenAmount(body);
+	const reported = raw === null || isVerificationCharge(raw) ? 0 : mnt(raw);
+	if (reported === null) {
+		await note(ctx, { ...base, kind: 'bonum.card_token.bad_amount', summary: 'The first payment had an unreadable amount' });
+	}
+	const asked = setup.paymentAmount;
+	const assumed = asked !== null && !reported;
+	if (asked !== null && reported !== asked) {
+		// What Bonum did report, so a first payment it describes differently can be read.
+		await note(ctx, { ...base, kind: 'bonum.card_token.reported', summary: reportedShape(body) });
+	}
+	const result = await saveCard(ctx, setup, {
+		token,
+		mask: str(body.mask).slice(0, 32) || '****',
+		expiry: str(body.expiry).slice(0, 16) || null,
+		bankName: str(obj(body.bank)?.name).slice(0, 100) || null,
+		paidAmount: assumed ? asked : (reported ?? 0),
+		amountAssumed: assumed
+	});
+	return result === 'saved' ? 'processed' : 'duplicate';
+}
+
+async function cardStepFailed(ctx: ServiceContext, setup: CardSetup, body: Body): Promise<WebhookResult> {
+	const base = { projectId: setup.projectId, subjectType: 'card' as const, subjectId: setup.id };
+	if (!(await failSetup(ctx, setup))) {
+		if (setup.status === 'completed') {
+			await note(ctx, { ...base, kind: 'bonum.card_token.failed_late', summary: withFailure('Ignored a failed tokenization for a card already saved', body) });
+			return 'ignored';
+		}
+		return 'duplicate';
+	}
+	await note(ctx, { ...base, kind: 'bonum.card_token.failed', summary: withFailure('The customer did not complete the card step', body) });
+	return 'processed';
 }
 
 async function newCardRow(ctx: ServiceContext, sub: Subscription, body: Body, token: string, now: number) {

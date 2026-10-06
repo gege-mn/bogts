@@ -12,7 +12,7 @@
  */
 import type { BatchItem, DB } from '../db';
 import { newId } from '../ids';
-import { delivery, event } from '../schema';
+import { delivery, event, type LineItem } from '../schema';
 
 export const EVENT_TYPES = [
 	'invoice.paid',
@@ -25,7 +25,11 @@ export const EVENT_TYPES = [
 	'subscription.card_changed',
 	'charge.succeeded',
 	'charge.failed',
-	'charge.reversed'
+	'charge.reversed',
+	'card.saved',
+	'card.failed',
+	'card.replaced',
+	'card.removed'
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -40,6 +44,8 @@ export interface InvoiceEventData {
 	/** invoice.paid */
 	paidAt?: number;
 	metadata?: Record<string, string> | null;
+	/** The lines the amount is the sum of, when the invoice was created with `items` */
+	items?: LineItem[];
 	/**
 	 * invoice.paid only: another invoice of the project with the same
 	 * `reference` was paid first (this is that invoice's id). The money moved
@@ -84,8 +90,23 @@ export interface ChargeEventData {
 	reference: string;
 	amount: number;
 	currency: 'MNT';
+	/** The lines the amount is the sum of, when the charge was created with `items` */
+	items?: LineItem[];
 	/** charge.failed: a short machine code, never provider text */
 	failureCode?: string | null;
+}
+
+export interface CardEventData {
+	cardId: string;
+	customerRef: string;
+	/** card.saved / card.replaced: the card's display mask */
+	cardMask?: string;
+	/** card.replaced: the card this one took the place of (now removed) */
+	replacesCardId?: string;
+	/** card.saved: the charge of the first payment, when one was taken */
+	chargeId?: string;
+	/** card.failed: `checkout_failed`. card.removed: `removed_by_project` or `removed_by_admin`. */
+	reason?: string;
 }
 
 /** The `data` of each event type. */
@@ -101,6 +122,10 @@ export interface EventDataMap {
 	'charge.succeeded': ChargeEventData;
 	'charge.failed': ChargeEventData;
 	'charge.reversed': ChargeEventData;
+	'card.saved': CardEventData;
+	'card.failed': CardEventData;
+	'card.replaced': CardEventData;
+	'card.removed': CardEventData;
 }
 
 export interface GatewayEvent<T extends EventType = EventType> {
@@ -117,7 +142,7 @@ export type EmittedEvent<T extends EventType = EventType> = GatewayEvent<T> & { 
 export interface EmitInput<T extends EventType> {
 	projectId: string;
 	type: T;
-	/** The invoice, subscription or charge id */
+	/** The invoice, subscription, charge or card id */
 	subjectId: string;
 	data: EventDataMap[T];
 	/**
