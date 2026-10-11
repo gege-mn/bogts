@@ -263,6 +263,14 @@ shown on payment pages. Each project can override the display name and logo
 on its payment pages (project → General → Payment page), for companies that
 run several brands. Every change is recorded in the audit log.
 
+## Notifications
+
+Settings → Notifications adds channels (Discord, Telegram, or a signed JSON
+POST to your own URL) that get a message each time a payment is received, in
+any project. A project can have channels of its own (project →
+Notifications). They are optional and need no configuration variable: see
+[notifications.md](notifications.md).
+
 ## Custom domain
 
 Add the domain to your Cloudflare account, then either use **Workers & Pages →

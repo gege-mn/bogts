@@ -11,6 +11,7 @@ your repository. Every push to it rebuilds and redeploys your Worker, and
 - Setup, providers, admin auth and upgrades: [docs/self-hosting.md](https://github.com/gege-mn/bogts/blob/main/docs/self-hosting.md)
 - The API: [docs/api.md](https://github.com/gege-mn/bogts/blob/main/docs/api.md)
 - Webhooks: [docs/webhooks.md](https://github.com/gege-mn/bogts/blob/main/docs/webhooks.md)
+- Notifications to you (Discord, Telegram, JSON): [docs/notifications.md](https://github.com/gege-mn/bogts/blob/main/docs/notifications.md)
 
 This folder stands alone on purpose (its own lockfile, `tsconfig.json` and
 `.gitignore`), because the Deploy button copies only `apps/gateway`. In the

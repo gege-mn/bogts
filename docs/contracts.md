@@ -45,6 +45,7 @@ rewrites the `main` its config names.
 | `providers/qpay/*` | The qpay-js wrapper, token cache, callback, and payment check |
 | `services/invoices.ts`, `subscriptions.ts`, `charges.ts` | The provider-agnostic logic that routes call |
 | `sweep.ts` | The expiry sweep (each invoice is checked once; see `docs/design.md`) |
+| `notify/*` | The operators' notifications (Discord, Telegram, JSON webhook): `dispatch.ts` finds payments in `ledger` without a `notification` row and sends them, run by `waitUntil` and by the cron. The payment path never calls it. |
 | `usage.ts` | Monthly usage meter per project: counts and volume, derived from `ledger` |
 
 Routes: `src/routes/v1/**` (project API), `src/routes/hooks/**` (provider
@@ -479,3 +480,44 @@ on HTML responses of the public area, never on `/brand/logo`, assets, JSON,
 
 **Fonts**: `static/fonts/<name>.<first 8 hex of sha-256>.woff2`, cached for a
 year as immutable (`_headers`); `src/lib/fonts.test.ts` checks the names.
+
+## As built (notifications)
+
+**Tables** (migration `0010_notifications`):
+
+| Table | Purpose |
+| --- | --- |
+| `notify_channel` | One destination: `project_id` (null = global), `kind` (`discord`, `telegram`, `webhook`), `label`, `config_enc` (`encrypt(JSON)` of the credentials), `hint` (secret-free, for the dashboard), `types` (JSON array of `NOTIFICATION_TYPES`), `enabled`, `active_from`, `last_sent_at`, `last_error`, `last_error_at` |
+| `notification` | One message to one channel: `channel_id`, `type`, `source_id` (the `ledger.id` for `payment.received`), and the delivery state (`status`, `attempts`, `next_attempt_at`, `last_status`, `last_error`, `sent_at`). Unique on `(channel_id, type, source_id)`. |
+
+- **The ledger drives it.** `notify/dispatch.ts` selects ledger rows with
+  `amount > 0` in a look-back window (2 minutes inline, 1 hour from the cron)
+  that have no `notification` row for a matching channel, and inserts the
+  missing rows with `ON CONFLICT DO NOTHING`. Services and providers are
+  unchanged: nothing in the payment path writes a notification.
+- **A channel matches** when it is enabled, lists the type, is global or the
+  payment's project's, and `active_from <= ledger.created_at`. `active_from`
+  is set on creation and on every resume, so a channel never gets a backlog.
+- **Bodies are built at send time** (`notify/message.ts`) from the ledger row
+  and its invoice, subscription or charge. `NotificationBody` is the JSON
+  webhook's body; the Discord and Telegram renderers are built from it.
+- **Claiming** is `events/deliver.ts`'s: one conditional UPDATE increments
+  `attempts` and leases the row. Retries: 1 min, 5 min, 30 min, 2 h, then 6 h,
+  within 24 h of the row's creation. Rows older than 30 days are purged
+  hourly.
+- **Adding a notification type**: add it to `NOTIFICATION_TYPES`
+  (`schema.ts`) and `NOTIFICATION_TYPE_OPTIONS` (`$lib/notify.ts`), enqueue
+  its rows in `dispatch.ts` with a `source_id`, and build its body in
+  `message.ts`.
+- **One exception to "never echo provider text"**: when a Send test is
+  refused, the dashboard shows the receiver's own reason (Telegram
+  `description`, Discord `message`), clipped to 200 characters. Only the
+  operator sees it, and without it a wrong chat id cannot be told from a wrong
+  token. It is never stored.
+- `notifyDue` throws on a database error (the cron's `notify` heartbeat
+  records it); `notifyFresh` never rejects.
+- One channel's messages go out one after another. A 429 ends that channel's
+  run and its remaining rows wait a minute, uncounted.
+- `notify/*` is reachable from the cron (`cron.ts`), so it imports nothing
+  from `$lib`. The dashboard's side (form parsing, writes, form actions) is
+  `admin/notify.ts`.

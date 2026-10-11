@@ -7,6 +7,7 @@
 import { eq } from 'drizzle-orm';
 import { errorJson, handle, json } from '$lib/server/api/errors';
 import { deliverFresh } from '$lib/server/events/deliver';
+import { notifyFresh } from '$lib/server/notify/dispatch';
 import { pollQpayInvoice } from '$lib/server/providers/qpay/callback';
 import { ipRateKey } from '$lib/server/ip';
 import { safeReturnUrl, STATUS_LIMIT } from '$lib/server/public/invoice-view';
@@ -43,6 +44,7 @@ export const GET: RequestHandler = handle(async ({ locals, params, getClientAddr
 		if (await pollQpayInvoice(ctx, row)) {
 			row = (await locals.db.select().from(invoice).where(eq(invoice.id, params.invoiceId)).limit(1))[0] ?? row;
 			locals.waitUntil(deliverFresh(ctx));
+			locals.waitUntil(notifyFresh(ctx));
 		}
 	}
 	return json({

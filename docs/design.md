@@ -65,6 +65,11 @@ signing secret. Delivery goes through an outbox table (no Cloudflare Queues: the
 runs inline, then an every-minute cron retries),
 retrying with exponential backoff for up to 3 days until the project answers 2xx.
 
+Apart from events, the people running the deployment can be told about each
+payment in Discord, in Telegram or at a URL of theirs
+([notifications.md](notifications.md)). That is driven by the ledger from the
+same inline pass and cron, and the payment path does not know about it.
+
 The event types are:
 - `invoice.paid`, `invoice.expired`, `invoice.failed`
 - `subscription.active`, `subscription.renewed`, `subscription.payment_failed`, `subscription.cancelled`, `subscription.card_changed`
@@ -115,6 +120,7 @@ deploy never runs open.
 - `ledger`: provider payment ref (unique), for applying each payment once
 - `provider_token`: the Bonum and QPay access-token cache
 - `event` and `delivery`: the outbox
+- `notify_channel` and `notification`: the operators' notification channels and what was sent to each
 - `ebarimt_*`: reserved columns only. e-barimt is a later version.
 
 ## Configuration (Deploy button prompts)

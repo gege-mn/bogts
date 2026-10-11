@@ -3,6 +3,7 @@
 	import Callout from '$lib/components/Callout.svelte';
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import NotifyChannels from '$lib/components/NotifyChannels.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import Time from '$lib/components/Time.svelte';
@@ -133,6 +134,8 @@
 		{/key}
 	</section>
 
+	<NotifyChannels channels={data.channels} scope="global" allowLocal={data.allowLocal} />
+
 	<section class="card">
 		<header><h2>Callback URLs</h2></header>
 		<dl class="kv">
@@ -180,7 +183,7 @@
 			{#each jobRuns as { label, job } (label)}
 				<div><dt>{label}</dt><dd>{#if job?.lastRunAt}<Time at={job.lastRunAt} mode="relative" />{:else}<span class="subtle">Never</span>{/if}</dd></div>
 			{/each}
-			{#each [data.cron.deliver, data.cron.sweep, data.cron.lateCheck, data.cron.reconcile, data.cron.purge].filter((j) => j?.lastError) as j (j!.name)}
+			{#each [data.cron.deliver, data.cron.notify, data.cron.sweep, data.cron.lateCheck, data.cron.reconcile, data.cron.purge].filter((j) => j?.lastError) as j (j!.name)}
 				<div><dt>Last {j!.name} error</dt><dd class="tone-danger mono">{j!.lastError}</dd></div>
 			{/each}
 		</dl>

@@ -2,7 +2,16 @@ import { fail } from '@sveltejs/kit';
 import { adminContext, adminOnly, failFrom } from '$lib/server/admin/actions';
 import { recordAudit } from '$lib/server/audit';
 import { dropLogoIfUnused, dropOrphanLogos, fileFrom, parseBrandInput, prepareLogo, saveBranding, storeLogo } from '$lib/server/branding';
-import { callbackUrls, cronStatus, providerHealth } from '$lib/server/admin/health';
+import { allowsLocalWebhooks, callbackUrls, cronStatus, providerHealth } from '$lib/server/admin/health';
+import {
+	addChannelAction,
+	deleteChannelAction,
+	listChannels,
+	telegramChatsAction,
+	testChannelAction,
+	toggleChannelAction,
+	updateChannelAction
+} from '$lib/server/admin/notify';
 import { THEME_COOKIE } from '$lib/server/admin/prefs';
 import { requireConfig } from '$lib/server/locals';
 import type { Actions, PageServerLoad } from './$types';
@@ -21,7 +30,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 			encryptionKey: true,
 			adminPassword: config.admin.mode === 'password'
 		},
-		cron: await cronStatus(locals.db)
+		cron: await cronStatus(locals.db),
+		channels: await listChannels(locals.db, null),
+		allowLocal: allowsLocalWebhooks(config)
 	};
 };
 
@@ -59,6 +70,14 @@ export const actions: Actions = {
 		});
 		return { action: 'branding', ok: true };
 	},
+
+	/* Global notification channels: every project's payments. */
+	addChannel: (event) => addChannelAction(event, null),
+	updateChannel: (event) => updateChannelAction(event, null),
+	toggleChannel: (event) => toggleChannelAction(event, null),
+	testChannel: (event) => testChannelAction(event, null),
+	deleteChannel: (event) => deleteChannelAction(event, null),
+	telegramChats: telegramChatsAction,
 
 	theme: async ({ locals, request, cookies, url }) => {
 		adminContext(locals);

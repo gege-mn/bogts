@@ -3,9 +3,11 @@
  * `src/worker.ts`. Every minute: retry due webhook deliveries. When the
  * minute is a multiple of 10: the invoice expiry sweep with the expiry of
  * abandoned card steps, then the late check of expired QPay invoices. At
- * minute 5: renewal reconciliation (`reconcile.ts`). At minute 0: purge
- * expired idempotency keys and old rate-limit windows. Each job, and the tick
- * as a whole (`tick`), writes a `cron_heartbeat` row.
+ * minute 5: renewal reconciliation (`reconcile.ts`). Every minute, after
+ * those (they can record payments): the operators' notifications
+ * (`notify/dispatch.ts`). At minute 0: purge expired idempotency keys, old
+ * rate-limit windows and old notifications. Each job, and the tick as a whole
+ * (`tick`), writes a `cron_heartbeat` row.
  *
  * Imported by relative path from the Worker entry, which wrangler bundles with
  * esbuild (no `$lib`), so nothing reachable from here may import `$lib` or
@@ -15,6 +17,7 @@ import { getDb, type DB } from './db';
 import { tryLoadConfig, type Config, type Env } from './env';
 import { deliverDue } from './events/deliver';
 import { purgeIdempotency } from './idempotency';
+import { notifyDue, purgeNotifications } from './notify/dispatch';
 import { purgeRateLimits } from './rate-limit';
 import { cronHeartbeat } from './schema';
 import { reconcileRenewals } from './reconcile';
@@ -41,12 +44,14 @@ export function jobsFor(scheduledTime: number): Job[] {
 		jobs.push({ name: 'late_check', run: lateCheckExpired });
 	}
 	if (minute === RECONCILE_MINUTE) jobs.push({ name: 'reconcile', run: reconcileRenewals });
+	jobs.push({ name: 'notify', run: notifyDue });
 	if (minute === 0) {
 		jobs.push({
 			name: 'purge',
 			run: async (db, _config, now) => {
 				await purgeIdempotency(db, now);
 				await purgeRateLimits(db, now);
+				await purgeNotifications(db, now);
 			}
 		});
 	}

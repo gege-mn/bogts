@@ -15,8 +15,9 @@
 		open = $bindable(false),
 		secrets,
 		note,
+		lost = 'If lost, rotate to get new ones.',
 		ondone
-	}: { open?: boolean; secrets: Secret[]; note?: string; ondone?: () => void } = $props();
+	}: { open?: boolean; secrets: Secret[]; note?: string; lost?: string; ondone?: () => void } = $props();
 
 	let saved = $state(false);
 
@@ -38,7 +39,7 @@
 </script>
 
 <Modal bind:open title={secrets.length > 1 ? 'Save these secrets now' : 'Save this secret now'} dismissible={saved} onclose={finish}>
-	<Callout tone="warning">You won't see {secrets.length > 1 ? 'them' : 'it'} again. If lost, rotate to get new ones.</Callout>
+	<Callout tone="warning">You won't see {secrets.length > 1 ? 'them' : 'it'} again. {lost}</Callout>
 	{#each secrets as s (s.env)}
 		<div class="field">
 			<label for="secret-{s.env}">{s.label}</label>

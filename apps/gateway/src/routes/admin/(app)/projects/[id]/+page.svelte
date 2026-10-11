@@ -10,6 +10,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import IdChip from '$lib/components/IdChip.svelte';
 	import Money from '$lib/components/Money.svelte';
+	import NotifyChannels from '$lib/components/NotifyChannels.svelte';
 	import RevealSecrets from '$lib/components/RevealSecrets.svelte';
 	import Sheet from '$lib/components/Sheet.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
@@ -33,6 +34,7 @@
 				['general', 'General'],
 				['key', 'API key'],
 				['webhook', 'Webhook'],
+				['notifications', 'Notifications'],
 				['plans', 'Plans']
 			] as const
 		).map(([key, label]) => ({
@@ -365,6 +367,10 @@
 				</table>
 			{/if}
 		</section>
+	</div>
+{:else if data.tab === 'notifications'}
+	<div class="narrow stack">
+		<NotifyChannels channels={data.channels} scope="project" allowLocal={data.allowLocal} globalCount={data.globalChannels} />
 	</div>
 {:else}
 	<div class="stack">
