@@ -7,6 +7,17 @@ change the API; the notes will say how to upgrade.
 
 ## [Unreleased]
 
+### Added
+
+- **Notifications**: a message to Discord, to Telegram, or a signed JSON POST
+  to a URL of yours each time a payment is received. Channels are set up in
+  the dashboard, globally (Settings → Notifications, every project) or per
+  project (project → Notifications), any number of each kind. Each channel
+  picks what it is notified about; for now that is `payment.received`.
+  Optional: with no channel, nothing is sent. See
+  [docs/notifications.md](docs/notifications.md).
+  **Apply migration `0010_notifications` before deploying.**
+
 ## [0.2.0] - 2026-10-06
 
 ### Added

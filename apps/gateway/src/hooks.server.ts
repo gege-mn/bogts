@@ -16,6 +16,7 @@ import { authenticateAdmin } from '$lib/server/auth/admin';
 import { getDb } from '$lib/server/db';
 import { tryLoadConfigCached } from '$lib/server/env';
 import { deliverFresh } from '$lib/server/events/deliver';
+import { notifyFresh } from '$lib/server/notify/dispatch';
 import { ADMIN_LOGIN_PATH, applySecurityHeaders, areaOf, isLoginPath } from '$lib/server/gate';
 import { LANG_COOKIE, pickLocale } from '$lib/i18n/public/detect';
 
@@ -92,9 +93,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// deliveries emitted in the last 2 minutes (usually the ones this request
 	// just emitted) in the background. Never rejects; the cron retries the rest.
 	if ((area === 'v1' || area === 'hooks') && loaded.ok) {
-		event.locals.waitUntil(
-			deliverFresh({ db: event.locals.db, config: loaded.config, waitUntil: event.locals.waitUntil })
-		);
+		const ctx = { db: event.locals.db, config: loaded.config, waitUntil: event.locals.waitUntil };
+		event.locals.waitUntil(deliverFresh(ctx));
+		// The operators' notifications for a payment this request recorded, likewise.
+		event.locals.waitUntil(notifyFresh(ctx));
 	}
 
 	return applySecurityHeaders(response, url, area);

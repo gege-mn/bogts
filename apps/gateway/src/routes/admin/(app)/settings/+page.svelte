@@ -3,6 +3,7 @@
 	import Callout from '$lib/components/Callout.svelte';
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import NotifyChannels from '$lib/components/NotifyChannels.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import Time from '$lib/components/Time.svelte';
@@ -132,6 +133,8 @@
 			</form>
 		{/key}
 	</section>
+
+	<NotifyChannels channels={data.channels} scope="global" allowLocal={data.allowLocal} />
 
 	<section class="card">
 		<header><h2>Callback URLs</h2></header>

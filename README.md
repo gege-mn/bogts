@@ -129,6 +129,7 @@ event, so replays and retries are harmless.
 - [Self-hosting](docs/self-hosting.md): deploy, providers, admin auth, custom domain, upgrades, backups
 - [API reference](docs/api.md)
 - [Webhooks](docs/webhooks.md): events, signatures, retries, reconciling
+- [Notifications](docs/notifications.md): a Discord, Telegram or JSON message to you when money comes in
 - [Bonum](docs/providers/bonum.md) (and its [integration pitfalls](docs/providers/bonum-pitfalls.md)) and [QPay](docs/providers/qpay.md) notes
 - [FAQ](docs/faq.md)
 - Design: [design](docs/design.md), [decisions](docs/decisions.md), [contracts](docs/contracts.md)

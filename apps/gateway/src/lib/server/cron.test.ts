@@ -7,18 +7,18 @@ const at = (minute: number) => Date.UTC(2026, 8, 25, 12, minute, 0);
 
 describe('jobsFor', () => {
 	it('delivers every minute', () => {
-		expect(jobsFor(at(7)).map((j) => j.name)).toEqual(['deliver']);
+		expect(jobsFor(at(7)).map((j) => j.name)).toEqual(['deliver', 'notify']);
 	});
 	it('sweeps, then late-checks, when minute % 10 === 0', () => {
-		expect(jobsFor(at(10)).map((j) => j.name)).toEqual(['deliver', 'sweep', 'late_check']);
-		expect(jobsFor(at(50)).map((j) => j.name)).toEqual(['deliver', 'sweep', 'late_check']);
+		expect(jobsFor(at(10)).map((j) => j.name)).toEqual(['deliver', 'sweep', 'late_check', 'notify']);
+		expect(jobsFor(at(50)).map((j) => j.name)).toEqual(['deliver', 'sweep', 'late_check', 'notify']);
 	});
 	it('reconciles renewals once an hour, at minute 5', () => {
-		expect(jobsFor(at(5)).map((j) => j.name)).toEqual(['deliver', 'reconcile']);
-		expect(jobsFor(at(15)).map((j) => j.name)).toEqual(['deliver']);
+		expect(jobsFor(at(5)).map((j) => j.name)).toEqual(['deliver', 'reconcile', 'notify']);
+		expect(jobsFor(at(15)).map((j) => j.name)).toEqual(['deliver', 'notify']);
 	});
 	it('purges at the top of the hour', () => {
-		expect(jobsFor(at(0)).map((j) => j.name)).toEqual(['deliver', 'sweep', 'late_check', 'purge']);
+		expect(jobsFor(at(0)).map((j) => j.name)).toEqual(['deliver', 'sweep', 'late_check', 'notify', 'purge']);
 	});
 });
 

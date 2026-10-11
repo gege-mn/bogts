@@ -25,6 +25,7 @@ The (app) layout and the page load run in parallel. Pages don't `await parent()`
 | Settings (cron status) | 1 batch | 1 |
 | Pay page status poll | 1 batch (rate-limit hit + invoice) | 1, plus the QPay check when pending |
 | `deliverFresh` after each `/v1` or `/hooks` request with nothing pending | 1 indexed probe | 1 |
+| `notifyFresh` after each `/v1` or `/hooks` request with nothing to send | 1 (ledger rows of the last 2 minutes by `ledger_created_idx`, joined to `notify_channel`) | 1 |
 
 Measured with a simulated 5 ms round trip, including the layout:
 

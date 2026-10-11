@@ -44,6 +44,13 @@ export type LedgerKind = (typeof LEDGER_KINDS)[number];
 export const DELIVERY_STATUSES = ['pending', 'succeeded', 'failed'] as const;
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 
+export const NOTIFY_CHANNEL_KINDS = ['discord', 'telegram', 'webhook'] as const;
+export type NotifyChannelKind = (typeof NOTIFY_CHANNEL_KINDS)[number];
+
+/** What a notification channel can be told about. A channel lists the ones it wants. */
+export const NOTIFICATION_TYPES = ['payment.received'] as const;
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+
 /** A bank app link on a QPay invoice (QPay's `urls[]`). */
 export type Deeplink = { name: string; description?: string; logo?: string; link: string };
 
@@ -514,6 +521,80 @@ export const deliveryAttempt = sqliteTable(
 );
 
 /* ------------------------------------------------------------------ *
+ * Notifications (for the people running the deployment)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Where the operators are told about payments: a Discord webhook, a Telegram
+ * chat or a signed JSON webhook. Any number per project, and any number with
+ * no project (they hear about every project). Apart from the outbox above:
+ * that one is the contract with a project's backend, this one is for people.
+ */
+export const notifyChannel = sqliteTable(
+	'notify_channel',
+	{
+		id: text('id').primaryKey(),
+		/** Null = global: every project's notifications */
+		projectId: text('project_id').references(() => project.id),
+		kind: text('kind', { enum: NOTIFY_CHANNEL_KINDS }).notNull(),
+		label: text('label').notNull(),
+		/** `encrypt(JSON)` of the kind's credentials (`notify/channels.ts` `ChannelConfig`) */
+		configEnc: text('config_enc').notNull(),
+		/** A secret-free reminder of where it goes (a host, a chat id), for the dashboard */
+		hint: text('hint').notNull(),
+		/** The `NOTIFICATION_TYPES` this channel wants */
+		types: text('types', { mode: 'json' }).notNull().$type<NotificationType[]>(),
+		enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+		/**
+		 * Only things that happened at or after this are sent: set on creation and
+		 * again on every un-pause, so a channel never gets a backlog.
+		 */
+		activeFrom: integer('active_from').notNull(),
+		lastSentAt: integer('last_sent_at'),
+		/** Short safe class of the last failed send (`timeout`, `http_4xx`, …); null after a success */
+		lastError: text('last_error'),
+		lastErrorAt: integer('last_error_at'),
+		createdAt: integer('created_at').notNull(),
+		updatedAt: integer('updated_at').notNull()
+	},
+	(t) => [index('notify_channel_project_idx').on(t.projectId)]
+);
+
+/**
+ * One message to one channel, with retries. The body is built when it is sent,
+ * from what `sourceId` points at, so nothing about the payment is copied here.
+ */
+export const notification = sqliteTable(
+	'notification',
+	{
+		id: text('id').primaryKey(),
+		channelId: text('channel_id')
+			.notNull()
+			.references(() => notifyChannel.id),
+		type: text('type', { enum: NOTIFICATION_TYPES }).notNull(),
+		/** What it is about: the `ledger.id` for `payment.received` */
+		sourceId: text('source_id').notNull(),
+		status: text('status', { enum: DELIVERY_STATUSES }).notNull().default('pending'),
+		attempts: integer('attempts').notNull().default(0),
+		/** When to try next; null once final */
+		nextAttemptAt: integer('next_attempt_at'),
+		lastStatus: integer('last_status'),
+		lastError: text('last_error'),
+		sentAt: integer('sent_at'),
+		createdAt: integer('created_at').notNull(),
+		updatedAt: integer('updated_at').notNull()
+	},
+	(t) => [
+		// A channel hears about one thing once, however often the dispatcher looks.
+		uniqueIndex('notification_channel_source_uq').on(t.channelId, t.type, t.sourceId),
+		// The cron: pending notifications due now.
+		index('notification_due_idx').on(t.status, t.nextAttemptAt),
+		// The hourly purge of old rows.
+		index('notification_created_idx').on(t.createdAt)
+	]
+);
+
+/* ------------------------------------------------------------------ *
  * Request plumbing and the dashboard
  * ------------------------------------------------------------------ */
 
@@ -625,7 +706,7 @@ export const brandLogo = sqliteTable('brand_logo', {
 
 /** When each cron job last ran and how it went, for the dashboard's health view. */
 export const cronHeartbeat = sqliteTable('cron_heartbeat', {
-	/** `tick`, `deliver`, `sweep`, `late_check`, `reconcile`, `purge` */
+	/** `tick`, `deliver`, `notify`, `sweep`, `late_check`, `reconcile`, `purge` */
 	name: text('name').primaryKey(),
 	lastRunAt: integer('last_run_at').notNull(),
 	lastDurationMs: integer('last_duration_ms').notNull(),
@@ -663,6 +744,8 @@ export type ProviderToken = typeof providerToken.$inferSelect;
 export type EventRow = typeof event.$inferSelect;
 export type Delivery = typeof delivery.$inferSelect;
 export type DeliveryAttempt = typeof deliveryAttempt.$inferSelect;
+export type NotifyChannel = typeof notifyChannel.$inferSelect;
+export type Notification = typeof notification.$inferSelect;
 export type Idempotency = typeof idempotency.$inferSelect;
 export type AuditLog = typeof auditLog.$inferSelect;
 export type Activity = typeof activity.$inferSelect;
