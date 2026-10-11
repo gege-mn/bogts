@@ -509,6 +509,15 @@ year as immutable (`_headers`); `src/lib/fonts.test.ts` checks the names.
   (`schema.ts`) and `NOTIFICATION_TYPE_OPTIONS` (`$lib/notify.ts`), enqueue
   its rows in `dispatch.ts` with a `source_id`, and build its body in
   `message.ts`.
+- **One exception to "never echo provider text"**: when a Send test is
+  refused, the dashboard shows the receiver's own reason (Telegram
+  `description`, Discord `message`), clipped to 200 characters. Only the
+  operator sees it, and without it a wrong chat id cannot be told from a wrong
+  token. It is never stored.
+- `notifyDue` throws on a database error (the cron's `notify` heartbeat
+  records it); `notifyFresh` never rejects.
+- One channel's messages go out one after another. A 429 ends that channel's
+  run and its remaining rows wait a minute, uncounted.
 - `notify/*` is reachable from the cron (`cron.ts`), so it imports nothing
   from `$lib`. The dashboard's side (form parsing, writes, form actions) is
   `admin/notify.ts`.

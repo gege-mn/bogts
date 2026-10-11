@@ -339,6 +339,57 @@ describe('failures', () => {
 	});
 });
 
+describe('a busy pass', () => {
+	it('writes and sends every notification when many payments land at once', async () => {
+		const db = createTestDb();
+		const { project } = await seed(db, { now: NOW });
+		await addDiscord(db, project.id);
+		await addChannel(db, null, { kind: 'webhook', url: 'https://ops.test/hook' });
+		const sent = stubFetch(() => new Response(null, { status: 204 }));
+		// 30 payments for 2 channels: 60 rows, several insert chunks (D1 takes 100 parameters a statement).
+		for (let i = 0; i < 30; i++) await pay(db, project.id, NOW + i, { reference: `order_${i}` });
+		expect(await notifyDue(db, config, NOW + MIN)).toBe(50);
+		expect(await notifyDue(db, config, NOW + MIN + 1)).toBe(10);
+		const rows = await rowsOf(db);
+		expect(rows).toHaveLength(60);
+		expect(rows.every((r) => r.status === 'succeeded' && r.attempts === 1)).toBe(true);
+		expect(sent).toHaveLength(60);
+	});
+
+	it('a channel that answers 429 gets no more in that run, and the rest wait a minute uncounted', async () => {
+		const db = createTestDb();
+		const { project } = await seed(db, { now: NOW });
+		const limited = await addDiscord(db, project.id);
+		const other = await addChannel(db, project.id, { kind: 'webhook', url: 'https://ops.test/hook' });
+		let limit = true;
+		const sent = stubFetch((req) => (limit && req.url === DISCORD_URL ? new Response('slow down', { status: 429 }) : new Response(null, { status: 204 })));
+		for (let i = 0; i < 4; i++) await pay(db, project.id, NOW + i, { reference: `order_${i}` });
+		await notifyDue(db, config, NOW + 10);
+
+		expect(sent.filter((s) => s.url === DISCORD_URL)).toHaveLength(1);
+		const of = async (channelId: string) => (await rowsOf(db)).filter((r) => r.channelId === channelId);
+		expect((await of(other.channel.id)).every((r) => r.status === 'succeeded')).toBe(true);
+		const waiting = await of(limited.channel.id);
+		expect(waiting.filter((r) => r.attempts === 1 && r.lastStatus === 429)).toHaveLength(1);
+		expect(waiting.filter((r) => r.attempts === 0 && r.nextAttemptAt === NOW + 10 + MIN)).toHaveLength(3);
+
+		limit = false;
+		await notifyDue(db, config, NOW + 10 + MIN);
+		expect((await of(limited.channel.id)).every((r) => r.status === 'succeeded')).toBe(true);
+		expect(sent.filter((s) => s.url === DISCORD_URL)).toHaveLength(5);
+	});
+
+	it('a blank reference is left out of the message', async () => {
+		const db = createTestDb();
+		const { project } = await seed(db, { now: NOW });
+		await addDiscord(db, project.id);
+		const sent = stubFetch(() => new Response(null, { status: 204 }));
+		await pay(db, project.id, NOW, { reference: '   ', description: 'Pro plan' });
+		await notifyFresh({ db, config, now: NOW });
+		expect(JSON.parse(sent[0]!.body).embeds[0].fields).toEqual([{ name: 'Description', value: 'Pro plan', inline: false }]);
+	});
+});
+
 describe('purgeNotifications', () => {
 	it('drops rows older than the retention and keeps the rest', async () => {
 		const db = createTestDb();

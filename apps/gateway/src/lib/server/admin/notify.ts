@@ -274,7 +274,7 @@ export async function testChannel(db: DB, config: Config, projectId: string | nu
 	} catch {
 		return { ok: false, error: 'config_unavailable', detail: 'The saved credentials cannot be read. Delete the channel and add it again.' };
 	}
-	const outcome = await sendNotification(credentials, testBody(config, p ?? null, now));
+	const outcome = await sendNotification(credentials, testBody(config, newId(), p ?? null, now));
 	await db
 		.update(notifyChannel)
 		.set(outcome.ok ? { lastSentAt: now, lastError: null, lastErrorAt: null } : { lastError: outcome.error, lastErrorAt: now })
@@ -362,14 +362,21 @@ export async function addChannelAction({ locals, request }: ActionEvent, project
 	try {
 		const input = parseChannelInput(form, allowsLocalWebhooks(config));
 		const { channel, secret } = await createChannel(locals.db, config.encryptionKey, projectId, input);
-		await recordAudit(locals.db, {
-			admin,
-			action: 'notify.create',
-			subject: channel.id,
-			detail: { projectId, kind: channel.kind, label: channel.label, hint: channel.hint, types: channel.types }
-		});
-		// The form's "send a test now": the channel is kept either way, and the page says how it went.
-		const test = form.get('test') === '1' ? await testChannel(locals.db, config, projectId, channel.id) : null;
+		// The channel exists now, and a webhook's secret can only be shown in this
+		// answer: nothing after this point may turn the action into a failure.
+		let test: ChannelTestResult | null = null;
+		try {
+			await recordAudit(locals.db, {
+				admin,
+				action: 'notify.create',
+				subject: channel.id,
+				detail: { projectId, kind: channel.kind, label: channel.label, hint: channel.hint, types: channel.types }
+			});
+			// The form's "send a test now": the channel is kept either way, and the page says how it went.
+			if (form.get('test') === '1') test = await testChannel(locals.db, config, projectId, channel.id);
+		} catch (err) {
+			console.error('[admin] addChannel follow-up failed', err instanceof Error ? err.name : typeof err);
+		}
 		return {
 			action: 'addChannel',
 			ok: true,

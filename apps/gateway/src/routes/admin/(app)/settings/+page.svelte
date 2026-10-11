@@ -183,7 +183,7 @@
 			{#each jobRuns as { label, job } (label)}
 				<div><dt>{label}</dt><dd>{#if job?.lastRunAt}<Time at={job.lastRunAt} mode="relative" />{:else}<span class="subtle">Never</span>{/if}</dd></div>
 			{/each}
-			{#each [data.cron.deliver, data.cron.sweep, data.cron.lateCheck, data.cron.reconcile, data.cron.purge].filter((j) => j?.lastError) as j (j!.name)}
+			{#each [data.cron.deliver, data.cron.notify, data.cron.sweep, data.cron.lateCheck, data.cron.reconcile, data.cron.purge].filter((j) => j?.lastError) as j (j!.name)}
 				<div><dt>Last {j!.name} error</dt><dd class="tone-danger mono">{j!.lastError}</dd></div>
 			{/each}
 		</dl>

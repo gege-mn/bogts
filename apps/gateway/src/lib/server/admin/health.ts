@@ -77,6 +77,7 @@ export async function cronStatus(db: DB, now = Date.now()) {
 	return {
 		tick,
 		deliver: byName.get('deliver') ?? null,
+		notify: byName.get('notify') ?? null,
 		sweep: byName.get('sweep') ?? null,
 		purge: byName.get('purge') ?? null,
 		lateCheck: byName.get('late_check') ?? null,

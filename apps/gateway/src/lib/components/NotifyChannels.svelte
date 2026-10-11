@@ -156,6 +156,10 @@
 		};
 	}
 
+	/** The toast says what was just asked for: the form's own `enabled`, not the row as it was when it mounted. */
+	const toggle = (key: string): SubmitFunction => (input) =>
+		quiet(key, input.formData.get('enabled') === 'true' ? 'Channel resumed' : 'Channel paused')(input);
+
 	let confirmDelete = $state<{ id: string; label: string } | null>(null);
 	let deleteOpen = $state(false);
 </script>
@@ -216,7 +220,7 @@
 								deleteOpen = true;
 							}}>Delete</button
 						>
-						<form method="POST" action="?/toggleChannel" use:enhance={quiet(`toggle:${c.id}`, c.enabled ? 'Channel paused' : 'Channel resumed')}>
+						<form method="POST" action="?/toggleChannel" use:enhance={toggle(`toggle:${c.id}`)}>
 							<input type="hidden" name="channelId" value={c.id} />
 							<input type="hidden" name="enabled" value={c.enabled ? 'false' : 'true'} />
 							<button

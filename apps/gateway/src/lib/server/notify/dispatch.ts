@@ -14,7 +14,7 @@
  *    found. One cheap read when there is nothing to do.
  *  - `notifyDue(db, config, now)`: the every-minute cron. Looks back an hour
  *    (so a payment the inline pass never saw is picked up) and sends everything
- *    due, retries included.
+ *    due, retries included. Throws on a database error (the heartbeat records it).
  *  - `purgeNotifications(db, now)`: the hourly purge.
  *
  * Claiming works as in `events/deliver.ts`: one conditional UPDATE increments
@@ -63,8 +63,8 @@ export function nextNotifyAttempt(createdAt: number, attempts: number, now: numb
  * Enqueueing
  * ------------------------------------------------------------------ */
 
-/** Seven bound values per row, and D1 takes at most 100 per statement. */
-const INSERT_CHUNK = 12;
+/** Nine bound values per row (every column below), and D1 takes at most 100 per statement. */
+const INSERT_CHUNK = 11;
 
 /**
  * Writes the missing `payment.received` notifications for payments recorded
@@ -99,6 +99,9 @@ async function enqueuePayments(db: DB, now: number, windowMs: number): Promise<s
 		channelId: m.channelId,
 		type: 'payment.received' as const,
 		sourceId: m.ledgerId,
+		// Named, not left to the column defaults: Drizzle binds those too, and the chunk size counts them.
+		status: 'pending' as const,
+		attempts: 0,
 		nextAttemptAt: now,
 		createdAt: now,
 		updatedAt: now
@@ -155,7 +158,7 @@ async function recordOutcome(db: DB, n: Notification, outcome: AttemptOutcome, n
 	]);
 }
 
-/** Sends one claimed notification and records it. Never throws. */
+/** Sends one claimed notification and records it. Never throws. Returns the receiver's HTTP status, if it answered. */
 async function sendClaimed(
 	db: DB,
 	config: Config,
@@ -163,10 +166,16 @@ async function sendClaimed(
 	channel: NotifyChannel | undefined,
 	body: NotificationBody | undefined,
 	now: number
-): Promise<void> {
+): Promise<number | null> {
 	try {
-		if (!channel || !channel.enabled) return await settleUnsent(db, n, 'channel_paused', now);
-		if (!body) return await settleUnsent(db, n, 'source_missing', now);
+		if (!channel || !channel.enabled) {
+			await settleUnsent(db, n, 'channel_paused', now);
+			return null;
+		}
+		if (!body) {
+			await settleUnsent(db, n, 'source_missing', now);
+			return null;
+		}
 		let outcome: AttemptOutcome;
 		try {
 			outcome = await sendNotification(await channelConfig(channel, config.encryptionKey), body);
@@ -174,8 +183,36 @@ async function sendClaimed(
 			outcome = { ok: false, httpStatus: null, error: 'config_unavailable', responseBody: null, durationMs: 0 };
 		}
 		await recordOutcome(db, n, outcome, now);
+		return outcome.httpStatus;
 	} catch (err) {
 		console.error('[notify] attempt failed', err instanceof Error ? err.name : typeof err, n.id);
+		return null;
+	}
+}
+
+/**
+ * Puts claimed notifications back, unsent and uncounted, to be tried again in
+ * a minute: the rest of a channel's rows once the channel said 429.
+ */
+async function release(db: DB, rows: Notification[], now: number): Promise<void> {
+	if (rows.length === 0) return;
+	try {
+		await db
+			.update(notification)
+			.set({ attempts: sql`${notification.attempts} - 1`, nextAttemptAt: now + MINUTE, updatedAt: now })
+			.where(
+				and(
+					inArray(
+						notification.id,
+						rows.map((n) => n.id)
+					),
+					// Still this run's claim.
+					eq(notification.nextAttemptAt, now + CLAIM_LEASE_MS)
+				)
+			);
+	} catch (err) {
+		// The lease ends on its own; the cron then retries them.
+		console.error('[notify] release failed', err instanceof Error ? err.name : typeof err);
 	}
 }
 
@@ -188,7 +225,12 @@ async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>
 	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
-/** Loads the channels and payments of claimed notifications and sends each. */
+/**
+ * Loads the channels and payments of claimed notifications and sends each:
+ * channels side by side, one channel's messages one after another (Discord and
+ * Telegram limit each webhook and chat). A channel that answers 429 gets no
+ * more in this run; the rest of its rows wait a minute.
+ */
 async function sendAll(db: DB, config: Config, claimed: Notification[], now: number): Promise<number> {
 	if (claimed.length === 0) return 0;
 	const channelIds = [...new Set(claimed.map((n) => n.channelId))];
@@ -201,20 +243,30 @@ async function sendAll(db: DB, config: Config, claimed: Notification[], now: num
 		)
 	]);
 	const channelById = new Map(channels.map((c) => [c.id, c]));
-	await pool(claimed, NOTIFY_CONCURRENCY, (n) => {
-		const payment = payments.get(n.sourceId);
-		const body: NotificationBody | undefined = payment && {
-			id: n.id,
-			object: 'notification',
-			type: n.type,
-			createdAt: new Date(payment.createdAt).toISOString(),
-			origin: config.publicOrigin,
-			project: payment.project,
-			data: payment.data
-		};
-		return sendClaimed(db, config, n, channelById.get(n.channelId), body, now);
+	const byChannel = new Map<string, Notification[]>();
+	for (const n of claimed) byChannel.set(n.channelId, [...(byChannel.get(n.channelId) ?? []), n]);
+	let handled = 0;
+	await pool([...byChannel.values()], NOTIFY_CONCURRENCY, async (rows) => {
+		for (const [i, n] of rows.entries()) {
+			const payment = payments.get(n.sourceId);
+			const body: NotificationBody | undefined = payment && {
+				id: n.id,
+				object: 'notification',
+				type: n.type,
+				createdAt: new Date(payment.createdAt).toISOString(),
+				origin: config.publicOrigin,
+				project: payment.project,
+				data: payment.data
+			};
+			const status = await sendClaimed(db, config, n, channelById.get(n.channelId), body, now);
+			handled++;
+			if (status === 429) {
+				await release(db, rows.slice(i + 1), now);
+				return;
+			}
+		}
 	});
-	return claimed.length;
+	return handled;
 }
 
 /* ------------------------------------------------------------------ *
@@ -245,37 +297,33 @@ export async function notifyFresh(ctx: ServiceContext): Promise<number> {
 
 /**
  * The cron: writes the notifications still missing for the last hour's
- * payments, then sends up to 50 that are due, 5 at a time. Returns how many it
- * sent. Never rejects.
+ * payments, then sends up to 50 that are due, 5 channels at a time. Returns
+ * how many it sent. A failed send is recorded on its row and never throws; a
+ * database error does, so the cron's `notify` heartbeat shows it.
  */
 export async function notifyDue(db: DB, config: Config, now: number): Promise<number> {
-	try {
-		await enqueuePayments(db, now, NOTIFY_CRON_WINDOW_MS);
-		const candidates = await db
-			.select({ id: notification.id })
-			.from(notification)
-			.where(due(now))
-			.orderBy(notification.nextAttemptAt)
-			.limit(NOTIFY_BATCH_SIZE);
-		if (candidates.length === 0) return 0;
-		const claimed = await db
-			.update(notification)
-			.set(claimSet(now))
-			.where(
-				and(
-					inArray(
-						notification.id,
-						candidates.map((c) => c.id)
-					),
-					due(now)
-				)
+	await enqueuePayments(db, now, NOTIFY_CRON_WINDOW_MS);
+	const candidates = await db
+		.select({ id: notification.id })
+		.from(notification)
+		.where(due(now))
+		.orderBy(notification.nextAttemptAt)
+		.limit(NOTIFY_BATCH_SIZE);
+	if (candidates.length === 0) return 0;
+	const claimed = await db
+		.update(notification)
+		.set(claimSet(now))
+		.where(
+			and(
+				inArray(
+					notification.id,
+					candidates.map((c) => c.id)
+				),
+				due(now)
 			)
-			.returning();
-		return await sendAll(db, config, claimed, now);
-	} catch (err) {
-		console.error('[notify] notifyDue failed', err instanceof Error ? err.name : typeof err);
-		return 0;
-	}
+		)
+		.returning();
+	return await sendAll(db, config, claimed, now);
 }
 
 /** Drops notifications older than 30 days; run from the cron. */

@@ -153,9 +153,9 @@ export async function paymentsReceived(
 }
 
 /** A made-up payment for the dashboard's Send test: marked `test`, linked to nothing. */
-export function testBody(config: Config, p: NotificationBody['project'] | null, now: number): NotificationBody {
+export function testBody(config: Config, id: string, p: NotificationBody['project'] | null, now: number): NotificationBody {
 	return {
-		id: 'test',
+		id,
 		object: 'notification',
 		type: 'payment.received',
 		createdAt: new Date(now).toISOString(),
@@ -196,10 +196,15 @@ export function messageParts(body: NotificationBody) {
 	const d = body.data;
 	const marks = [body.test ? 'Test' : null, d.sandbox ? 'Sandbox' : null].filter(Boolean);
 	const fields: { name: string; value: string }[] = [];
-	if (d.reference) fields.push({ name: 'Reference', value: clip(d.reference) });
-	if (d.customerRef) fields.push({ name: 'Customer', value: clip(d.customerRef) });
-	if (d.plan) fields.push({ name: 'Plan', value: clip(d.plan) });
-	if (d.description) fields.push({ name: 'Description', value: clip(d.description) });
+	// A blank value is left out: Discord refuses an embed field with nothing in it.
+	const field = (name: string, value: string | undefined) => {
+		const text = value?.trim();
+		if (text) fields.push({ name, value: clip(text) });
+	};
+	field('Reference', d.reference);
+	field('Customer', d.customerRef);
+	field('Plan', d.plan);
+	field('Description', d.description);
 	let host: string | null = null;
 	try {
 		host = body.origin ? new URL(body.origin).host : null;
