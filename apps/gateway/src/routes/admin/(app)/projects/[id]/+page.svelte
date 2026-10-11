@@ -370,7 +370,7 @@
 	</div>
 {:else if data.tab === 'notifications'}
 	<div class="narrow stack">
-		<NotifyChannels channels={data.channels} scope="project" allowLocal={data.allowLocal} />
+		<NotifyChannels channels={data.channels} scope="project" allowLocal={data.allowLocal} globalCount={data.globalChannels} />
 	</div>
 {:else}
 	<div class="stack">

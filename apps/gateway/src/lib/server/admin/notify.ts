@@ -8,7 +8,7 @@
  * global channel or another project's.
  */
 import { fail } from '@sveltejs/kit';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, count, eq, isNull } from 'drizzle-orm';
 import { ApiError } from '../api/errors';
 import { recordAudit } from '../audit';
 import type { DB } from '../db';
@@ -34,6 +34,7 @@ import {
 	type NotifyChannel,
 	type NotifyChannelKind
 } from '../schema';
+import { sendErrorText } from '$lib/notify';
 import { adminContext, failFrom } from './actions';
 import { isId } from './common';
 import { allowsLocalWebhooks } from './health';
@@ -149,6 +150,15 @@ export function listChannels(db: DB, projectId: string | null): Promise<ChannelV
 		.from(notifyChannel)
 		.where(scopeOf(projectId))
 		.orderBy(notifyChannel.id);
+}
+
+/** How many enabled global channels there are: a project's page says they hear about it too. */
+export async function globalChannelCount(db: DB): Promise<number> {
+	const [row] = await db
+		.select({ n: count() })
+		.from(notifyChannel)
+		.where(and(isNull(notifyChannel.projectId), eq(notifyChannel.enabled, true)));
+	return row?.n ?? 0;
 }
 
 async function mustChannel(db: DB, projectId: string | null, id: string): Promise<NotifyChannel> {
@@ -273,10 +283,78 @@ export async function testChannel(db: DB, config: Config, projectId: string | nu
 }
 
 /* ------------------------------------------------------------------ *
+ * Telegram: which chats can this bot write to?
+ * ------------------------------------------------------------------ */
+
+export type TelegramChat = { chatId: string; title: string; type: string; threadId: number | null };
+
+const TELEGRAM_LOOKUP_TIMEOUT_MS = 10_000;
+const TELEGRAM_CHATS_MAX = 12;
+
+type TelegramChatJson = { id?: unknown; title?: unknown; username?: unknown; first_name?: unknown; type?: unknown };
+type TelegramUpdate = Record<string, { chat?: TelegramChatJson; message_thread_id?: unknown; is_topic_message?: unknown } | undefined>;
+
+/**
+ * The chats a bot was recently written to in or added to (Telegram's
+ * `getUpdates`), newest first, so the form can offer them in place of a chat
+ * id typed by hand. Nothing is stored and no update is consumed. Throws an
+ * `ApiError` with words for the form; the token never appears in one.
+ */
+export async function findTelegramChats(rawToken: string): Promise<TelegramChat[]> {
+	const botToken = rawToken.trim();
+	if (!TELEGRAM_TOKEN.test(botToken)) throw bad('Enter the bot token from @BotFather first, like 123456789:AA…');
+	let res: Response;
+	try {
+		res = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ limit: 100, timeout: 0, allowed_updates: ['message', 'channel_post', 'my_chat_member'] }),
+			signal: AbortSignal.timeout(TELEGRAM_LOOKUP_TIMEOUT_MS)
+		});
+	} catch {
+		throw new ApiError(502, 'provider_error', 'Telegram could not be reached. Try again.');
+	}
+	if (res.status === 401 || res.status === 404) throw bad('Telegram does not know this bot token. Copy it again from @BotFather.');
+	if (res.status === 409) {
+		throw new ApiError(409, 'conflict', 'This bot has a webhook set, so its chats cannot be listed. Type the chat id instead.');
+	}
+	let updates: TelegramUpdate[];
+	try {
+		const json = (await res.json()) as { ok?: unknown; result?: unknown };
+		if (!res.ok || json.ok !== true || !Array.isArray(json.result)) throw new Error('unexpected answer');
+		updates = json.result as TelegramUpdate[];
+	} catch {
+		throw new ApiError(502, 'provider_error', 'Telegram gave an answer that could not be read. Type the chat id instead.');
+	}
+	const chats = new Map<string, TelegramChat>();
+	for (const update of [...updates].reverse()) {
+		const part = update.message ?? update.channel_post ?? update.my_chat_member;
+		const chat = part?.chat;
+		if (!chat || (typeof chat.id !== 'number' && typeof chat.id !== 'string')) continue;
+		const threadId = part.is_topic_message === true && typeof part.message_thread_id === 'number' ? part.message_thread_id : null;
+		const key = `${chat.id}:${threadId ?? ''}`;
+		if (chats.has(key)) continue;
+		const name = [chat.title, chat.first_name, chat.username].find((v): v is string => typeof v === 'string' && v !== '');
+		chats.set(key, {
+			chatId: String(chat.id),
+			title: (name ?? String(chat.id)).slice(0, 80),
+			type: typeof chat.type === 'string' ? chat.type : 'chat',
+			threadId
+		});
+		if (chats.size >= TELEGRAM_CHATS_MAX) break;
+	}
+	return [...chats.values()];
+}
+
+/* ------------------------------------------------------------------ *
  * Form actions (Settings: `projectId` null; a project's page: its id)
  * ------------------------------------------------------------------ */
 
 type ActionEvent = { locals: App.Locals; request: Request };
+
+/** A failed test in words, with what the receiver said when it said something. */
+const refusalText = (result: ChannelTestResult) =>
+	`The test did not go through: ${sendErrorText(result.error ?? 'network')}${result.detail ? ` (${result.detail})` : ''}.`;
 
 export async function addChannelAction({ locals, request }: ActionEvent, projectId: string | null) {
 	const { admin, config } = adminContext(locals);
@@ -290,9 +368,12 @@ export async function addChannelAction({ locals, request }: ActionEvent, project
 			subject: channel.id,
 			detail: { projectId, kind: channel.kind, label: channel.label, hint: channel.hint, types: channel.types }
 		});
+		// The form's "send a test now": the channel is kept either way, and the page says how it went.
+		const test = form.get('test') === '1' ? await testChannel(locals.db, config, projectId, channel.id) : null;
 		return {
 			action: 'addChannel',
 			ok: true,
+			...(test ? { test: { ok: test.ok, message: test.ok ? null : refusalText(test) } } : {}),
 			...(secret ? { revealed: [{ label: 'Notification signing secret', env: 'BOGTS_NOTIFY_SECRET', value: secret }] } : {})
 		};
 	} catch (err) {
@@ -344,11 +425,20 @@ export async function testChannelAction({ locals, request }: ActionEvent, projec
 	try {
 		const result = await testChannel(locals.db, config, projectId, id);
 		await recordAudit(locals.db, { admin, action: 'notify.test', subject: id, detail: { ok: result.ok, error: result.error } });
-		if (!result.ok) {
-			return fail(502, { action: 'testChannel', error: `The test was not accepted (${result.error ?? 'unknown'})${result.detail ? `: ${result.detail}` : ''}` });
-		}
+		if (!result.ok) return fail(502, { action: 'testChannel', error: refusalText(result) });
 		return { action: 'testChannel', ok: true };
 	} catch (err) {
 		return failFrom(err, 'testChannel');
+	}
+}
+
+/** The chats of a Telegram bot, for the add form. Scope-free: it reads Telegram, not the database. */
+export async function telegramChatsAction({ locals, request }: ActionEvent) {
+	adminContext(locals);
+	const form = await request.formData();
+	try {
+		return { action: 'telegramChats', chats: await findTelegramChats(String(form.get('botToken') ?? '')) };
+	} catch (err) {
+		return failFrom(err, 'telegramChats');
 	}
 }

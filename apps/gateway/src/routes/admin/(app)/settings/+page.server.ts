@@ -3,7 +3,15 @@ import { adminContext, adminOnly, failFrom } from '$lib/server/admin/actions';
 import { recordAudit } from '$lib/server/audit';
 import { dropLogoIfUnused, dropOrphanLogos, fileFrom, parseBrandInput, prepareLogo, saveBranding, storeLogo } from '$lib/server/branding';
 import { allowsLocalWebhooks, callbackUrls, cronStatus, providerHealth } from '$lib/server/admin/health';
-import { addChannelAction, deleteChannelAction, listChannels, testChannelAction, toggleChannelAction, updateChannelAction } from '$lib/server/admin/notify';
+import {
+	addChannelAction,
+	deleteChannelAction,
+	listChannels,
+	telegramChatsAction,
+	testChannelAction,
+	toggleChannelAction,
+	updateChannelAction
+} from '$lib/server/admin/notify';
 import { THEME_COOKIE } from '$lib/server/admin/prefs';
 import { requireConfig } from '$lib/server/locals';
 import type { Actions, PageServerLoad } from './$types';
@@ -69,6 +77,7 @@ export const actions: Actions = {
 	toggleChannel: (event) => toggleChannelAction(event, null),
 	testChannel: (event) => testChannelAction(event, null),
 	deleteChannel: (event) => deleteChannelAction(event, null),
+	telegramChats: telegramChatsAction,
 
 	theme: async ({ locals, request, cookies, url }) => {
 		adminContext(locals);

@@ -7,6 +7,8 @@ import {
 	MAX_CHANNELS,
 	createChannel,
 	deleteChannel,
+	findTelegramChats,
+	globalChannelCount,
 	listChannels,
 	parseChannelInput,
 	parseDiscordUrl,
@@ -174,5 +176,66 @@ describe('testChannel', () => {
 		vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ok: false, error_code: 400, description: 'Bad Request: chat not found' }, { status: 400 })));
 		expect(await testChannel(db, config, null, channel.id, NOW)).toEqual({ ok: false, error: 'http_4xx', detail: 'Bad Request: chat not found' });
 		expect((await listChannels(db, null))[0]).toMatchObject({ lastError: 'http_4xx', lastErrorAt: NOW });
+	});
+});
+
+describe('findTelegramChats', () => {
+	const update = (chat: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ update_id: 1, message: { chat, ...extra } });
+
+	it('lists the chats the bot has seen, newest first, each once', async () => {
+		const calls: string[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: RequestInfo | URL) => {
+				calls.push(String(url));
+				return Response.json({
+					ok: true,
+					result: [
+						update({ id: 42, first_name: 'Bat', type: 'private' }),
+						update({ id: -1001, title: 'Money', type: 'supergroup' }),
+						{ update_id: 3, channel_post: { chat: { id: -1002, title: 'Announcements', type: 'channel' } } },
+						update({ id: -1001, title: 'Money', type: 'supergroup' }, { is_topic_message: true, message_thread_id: 7 }),
+						update({ id: -1001, title: 'Money', type: 'supergroup' }),
+						{ update_id: 9, my_chat_member: { chat: { id: -1003, title: 'New group', type: 'group' } } },
+						{ update_id: 10, something_else: {} }
+					]
+				});
+			})
+		);
+		expect(await findTelegramChats(` ${TELEGRAM_TOKEN} `)).toEqual([
+			{ chatId: '-1003', title: 'New group', type: 'group', threadId: null },
+			{ chatId: '-1001', title: 'Money', type: 'supergroup', threadId: null },
+			{ chatId: '-1001', title: 'Money', type: 'supergroup', threadId: 7 },
+			{ chatId: '-1002', title: 'Announcements', type: 'channel', threadId: null },
+			{ chatId: '42', title: 'Bat', type: 'private', threadId: null }
+		]);
+		expect(calls).toEqual([`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates`]);
+	});
+
+	it('says what is wrong in words, and never repeats the token', async () => {
+		const failing = async (respond: () => Response | Promise<Response>) => {
+			vi.stubGlobal('fetch', vi.fn(async () => respond()));
+			const err = await findTelegramChats(TELEGRAM_TOKEN).catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(ApiError);
+			expect((err as ApiError).message).not.toContain(TELEGRAM_TOKEN);
+			return err as ApiError;
+		};
+		await expect(findTelegramChats('nope')).rejects.toMatchObject({ status: 400 });
+		expect((await failing(() => Response.json({ ok: false }, { status: 401 }))).status).toBe(400);
+		expect((await failing(() => Response.json({ ok: false }, { status: 409 }))).message).toContain('webhook');
+		expect((await failing(() => new Response('<html>', { status: 200 }))).status).toBe(502);
+		expect((await failing(() => Promise.reject(new TypeError(`fetch failed bot${TELEGRAM_TOKEN}`)))).status).toBe(502);
+	});
+});
+
+describe('globalChannelCount', () => {
+	it('counts enabled global channels only', async () => {
+		const db = createTestDb();
+		const { project } = await seedProject(db, { now: NOW });
+		await add(db, project.id);
+		await add(db, null);
+		const paused = await add(db, null);
+		await setChannelEnabled(db, null, paused.channel.id, false);
+		expect(await globalChannelCount(db)).toBe(1);
 	});
 });

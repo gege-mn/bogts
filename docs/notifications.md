@@ -41,7 +41,8 @@ A channel's credentials (the Discord URL, the Telegram bot token, the webhook
 signing secret) are stored encrypted and never shown again. To change where a
 channel sends, delete it and add it again. **Send test** sends a made-up
 payment, marked `[Test]`, and shows what the receiver answered when it
-refuses. Adding, editing, pausing, testing and deleting a channel are recorded
+refuses. Adding a channel sends one too, unless you untick it; the channel is
+kept either way. The switch on a channel pauses and resumes it. Adding, editing, pausing, testing and deleting a channel are recorded
 in the audit log.
 
 ## What is sent
@@ -70,9 +71,14 @@ Messages never mention anyone, whatever a reference or a description says.
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
 2. Add the bot to the group or channel (in a channel it must be an admin), or
    send it a message for a private chat.
-3. Find the chat id: a number, negative for groups and channels. A public
-   channel can be named instead, as `@channelname`. For a group with topics,
-   the topic id is optional.
+3. In the form, paste the token and press **Find my chats**: Bogts asks
+   Telegram which chats the bot has seen and you pick one. You can also type
+   the chat id yourself: a number, negative for groups and channels, or a
+   public channel's `@channelname`. For a group with topics, the topic id is
+   optional.
+
+**Find my chats** does not work for a bot that has a webhook set (Telegram
+refuses it); type the chat id for such a bot.
 
 ## Webhook (JSON)
 

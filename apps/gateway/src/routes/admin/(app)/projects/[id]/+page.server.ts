@@ -4,7 +4,16 @@ import { rotateApiKey } from '$lib/server/auth/api-key';
 import { adminContext, adminOnly, confirmed, failFrom } from '$lib/server/admin/actions';
 import { isId } from '$lib/server/admin/common';
 import { allowsLocalWebhooks } from '$lib/server/admin/health';
-import { addChannelAction, deleteChannelAction, listChannels, testChannelAction, toggleChannelAction, updateChannelAction } from '$lib/server/admin/notify';
+import {
+	addChannelAction,
+	deleteChannelAction,
+	globalChannelCount,
+	listChannels,
+	telegramChatsAction,
+	testChannelAction,
+	toggleChannelAction,
+	updateChannelAction
+} from '$lib/server/admin/notify';
 import {
 	archiveProject,
 	deliveryHealth,
@@ -43,12 +52,13 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 	if (!p) error(404, { message: `No project with id ${params.id}`, code: 'not_found' });
 	const t = url.searchParams.get('tab');
 	const tab: Tab = (TABS as readonly string[]).includes(t ?? '') ? (t as Tab) : 'general';
-	const [plans, live, deliveries, health, channels] = await Promise.all([
+	const [plans, live, deliveries, health, channels, globalChannels] = await Promise.all([
 		tab === 'plans' ? projectPlans(locals.db, p.id) : Promise.resolve([]),
 		tab === 'general' ? liveSubscriptionCount(locals.db, p.id) : Promise.resolve(0),
 		tab === 'webhook' ? recentDeliveries(locals.db, p.id) : Promise.resolve([]),
 		tab === 'webhook' ? deliveryHealth(locals.db, Date.now(), p.id) : Promise.resolve(null),
-		tab === 'notifications' ? listChannels(locals.db, p.id) : Promise.resolve([])
+		tab === 'notifications' ? listChannels(locals.db, p.id) : Promise.resolve([]),
+		tab === 'notifications' ? globalChannelCount(locals.db) : Promise.resolve(0)
 	]);
 	return {
 		tab,
@@ -80,6 +90,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		})),
 		health: health?.get(p.id) ?? null,
 		channels,
+		globalChannels,
 		apiBase: `${config.publicOrigin ?? url.origin}/v1`,
 		allowLocal: allowsLocalWebhooks(config),
 		bonumEnvironment: config.bonum?.environment ?? null
@@ -281,5 +292,6 @@ export const actions: Actions = {
 	updateChannel: (event) => updateChannelAction(event, event.params.id),
 	toggleChannel: (event) => toggleChannelAction(event, event.params.id),
 	testChannel: (event) => testChannelAction(event, event.params.id),
-	deleteChannel: (event) => deleteChannelAction(event, event.params.id)
+	deleteChannel: (event) => deleteChannelAction(event, event.params.id),
+	telegramChats: telegramChatsAction
 };
