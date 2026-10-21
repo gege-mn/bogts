@@ -1,0 +1,10 @@
+# Bun is for local development only; CI and deploys use pnpm (pnpm-lock.yaml).
+#
+# globalStore is disabled explicitly: with it enabled, Bun symlinks store
+# entries into ~/.bun/install/cache/links, so tools that resolve their own
+# dependencies (e.g. svelte-package looking for typescript) walk up from the
+# global cache and never reach this project's node_modules/.bun/node_modules
+# hoist fallback. That breaks `@repo/ui`'s build.
+[install]
+linker = "isolated"
+globalStore = false

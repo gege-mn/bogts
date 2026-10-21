@@ -15,3 +15,7 @@ build/
 *.local
 .vite/
 .screenshots/
+
+# Bun is for local development only; CI and deploys install from pnpm-lock.yaml.
+bun.lock
+bun.lockb

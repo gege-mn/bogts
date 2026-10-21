@@ -15,6 +15,16 @@
 		"check": "pnpm --filter @bogts/gateway check && pnpm --filter @gege-mn/bogts check",
 		"test": "pnpm --filter @bogts/gateway test && pnpm --filter @gege-mn/bogts test",
 		"deploy": "pnpm --filter @bogts/gateway run deploy",
-		"lockfile:gateway": "node scripts/gateway-lockfile.mjs"
-	}
+		"lockfile:gateway": "node scripts/gateway-lockfile.mjs",
+		"lock": "bunx @pnpm/exe@12.4.1 install --lockfile-only"
+	},
+	"trustedDependencies": [
+		"better-sqlite3",
+		"esbuild",
+		"workerd"
+	],
+	"workspaces": [
+		"apps/*",
+		"packages/*"
+	]
 }
