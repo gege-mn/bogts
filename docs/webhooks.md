@@ -48,7 +48,7 @@ Bogts reports facts. What a fact entitles your customer to is up to your app.
 | `charge.succeeded` | A saved-card charge went through. |
 | `charge.failed` | A saved-card charge was declined. `failureCode` says why. |
 | `charge.reversed` | A charge was reversed. |
-| `card.saved` | A card was saved. With `chargeId`, its first payment was taken too (that charge has its own `charge.succeeded`). |
+| `card.saved` | A card was saved. With `chargeId`, its first payment is being charged on it: that charge may still be pending, and its own `charge.succeeded` or `charge.failed` follows. |
 | `card.failed` | The card step didn't complete in time, or Bonum refused it. Nothing was charged. If Bonum reports the card later, it is still saved and `card.saved` follows. |
 | `card.replaced` | A replacement card was saved. `cardId` is the new card and `replacesCardId` the old one, now removed. |
 | `card.removed` | A card was removed and its token deleted. |
@@ -135,7 +135,7 @@ provider text. `subscriptionId` is `null` for a charge made by `cardId`.
 | Field | |
 |---|---|
 | `cardMask` | On `saved` and `replaced`. |
-| `chargeId` | On `saved` and `replaced`, when a payment was taken with the card step. |
+| `chargeId` | On `saved` and `replaced`, when the card step asked for a first payment: the charge of it, which may still be pending. |
 | `replacesCardId` | On `replaced`: the old card. |
 | `reason` | On `failed`: `checkout_failed`. On `removed`: `removed_by_project` or `removed_by_admin`. |
 

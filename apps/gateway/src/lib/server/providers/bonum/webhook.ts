@@ -275,7 +275,7 @@ async function cardToken(ctx: ServiceContext, body: Body, success: boolean): Pro
 
 /**
  * A plan-less card step succeeded: the card is saved, and its first payment is
- * a charge. A step since 0.3 asked Bonum's page for nothing but the card, and
+ * a charge. A `purchase` step asked Bonum's page for nothing but the card, and
  * its first payment is a purchase made once the card is saved (`saveCard`).
  * An older step asked the page for the payment (`payment.amount`), which Bonum
  * did not always report in `amounts[]` (seen on production, 2026-10-05 and

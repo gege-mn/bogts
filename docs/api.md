@@ -350,7 +350,7 @@ get here stays the card's id.
 |---|---|---|
 | `customerRef` | string, up to 128 characters | required. Your id for the customer. |
 | `returnUrl` | `https` URL | required. Where the customer lands afterwards. |
-| `payment` | object | optional. A first payment taken in the same step: `{ "reference", "amount" }`, or `items` in place of `amount`. |
+| `payment` | object | optional. A first payment, charged on the card as soon as it is saved: `{ "reference", "amount" }`, or `items` in place of `amount`. |
 
 ```sh
 curl https://pay.example.com/v1/cards \
@@ -472,8 +472,9 @@ must not be blind either.
 `POST /v1/charges/:id/reverse` (no body) → `200` with the charge, now
 `reversed`, and a `charge.reversed` event. Only a `succeeded` charge can be
 reversed. If Bonum doesn't confirm, the answer is `502 provider_error`.
-Bonum has refused to reverse the first payment taken while a card was saved;
-refund such a payment through Bonum's merchant portal if that happens.
+Bonum has refused to reverse the first payment its card page took, on card
+steps started before first payments were charged separately; refund such a
+payment through Bonum's merchant portal if that happens.
 
 ## Events
 

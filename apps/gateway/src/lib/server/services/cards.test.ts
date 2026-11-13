@@ -49,7 +49,7 @@ const cardTokenMessage = (transactionId: string, amount: number, status = 'SUCCE
 	}
 });
 
-/** A card step as one started before 0.3 is stored: its first payment was asked of Bonum's page. */
+/** A card step as one started before `purchase` steps is stored: its first payment was asked of Bonum's page. */
 async function legacyStep(payment: Parameters<typeof createCard>[2]['payment']) {
 	const pending = await createCard(ctx, project, { customerRef: 'user-1', returnUrl, payment });
 	await db.update(cardSetup).set({ firstPaymentBy: 'tokenize' }).where(eq(cardSetup.id, pending.id));
@@ -181,7 +181,18 @@ describe('CARD-TOKEN for a card step', () => {
 		expect(bonum.count(PURCHASE)).toBe(1);
 	});
 
-	it('a step started before 0.3 is finished the old way: Bonum\'s page took the payment, and nothing is purchased', async () => {
+	it('a step that had already ended failed still saves its card, but charges nothing', async () => {
+		const bonum = fakeBonum({ [TOKENIZE]: tokenizeOk, [PURCHASE]: purchaseOk });
+		const pending = await createCard(ctx, project, { customerRef: 'user-1', returnUrl, payment: { amount: 100, reference: 'order-1' } });
+		await db.update(cardSetup).set({ status: 'failed' }).where(eq(cardSetup.id, pending.id));
+		expect(await handleBonumWebhook(ctx, cardTokenMessage(pending.id, 0.01))).toBe('processed');
+		expect(await db.select().from(cardTable)).toMatchObject([{ id: pending.id, status: 'active' }]);
+		expect(bonum.count(PURCHASE)).toBe(0);
+		expect(await db.select().from(chargeTable)).toHaveLength(0);
+		expect((await db.select().from(event)).find((e) => e.type === 'card.saved')!.data).not.toHaveProperty('chargeId');
+	});
+
+	it('a step started before purchase steps is finished the old way: Bonum\'s page took the payment, and nothing is purchased', async () => {
 		const bonum = fakeBonum({ [TOKENIZE]: tokenizeOk, [PURCHASE]: purchaseOk });
 		const pending = await legacyStep({ amount: 40_000, reference: 'order-1' });
 		await handleBonumWebhook(ctx, cardTokenMessage(pending.id, 40_000));

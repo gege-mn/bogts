@@ -463,11 +463,13 @@ async function cardWrites(ctx: ServiceContext, setup: CardSetup, details: SavedC
  * in one batch the card, its first payment as a pending charge, and
  * `card.saved` naming that charge; then the purchase on the new token, whose
  * outcome is an ordinary `charge.*` event. Whatever Bonum's message says it
- * took is its 0.01 MNT check: nothing else was asked of its page.
+ * took is its 0.01 MNT check: nothing else was asked of its page. A step that
+ * had already ended `failed` (the project was told `card.failed`) still saves
+ * its card, but nothing is charged: the project decides what to do with it.
  */
 async function saveThenCharge(ctx: ServiceContext, setup: CardSetup, details: SavedCardDetails, now: number): Promise<'saved' | 'duplicate'> {
 	const charge: Charge | null =
-		setup.paymentAmount !== null
+		setup.paymentAmount !== null && setup.status !== 'failed'
 			? (() => {
 					const id = newId();
 					return {
@@ -512,15 +514,24 @@ async function saveThenCharge(ctx: ServiceContext, setup: CardSetup, details: Sa
 		if (await eventExists(ctx, dedupeKey)) return 'duplicate';
 		throw err;
 	}
-	await note(ctx, setup.projectId, setup.id, 'bonum.card_token.saved', charge ? `Card saved; charging the first payment of ${charge.amount} MNT` : 'Card saved');
+	// The purchase before any other write: a failure after the batch must not leave it unsent, since a redelivery is a duplicate.
 	if (charge) {
 		try {
 			await purchase(ctx, charge, details.token);
 		} catch (err) {
-			// Bonum may have the purchase: the charge stays pending, as an unanswered one does, and is never sent twice.
-			await note(ctx, setup.projectId, setup.id, 'bonum.card_token.charge_unknown', `The first payment's outcome is unknown (${err instanceof Error ? err.name : 'error'})`);
+			// `purchase` notes every Bonum outcome itself; this is a failure of our own after it may have gone out.
+			// The charge stays pending, as an unanswered purchase does, and is never sent twice.
+			await note(ctx, setup.projectId, setup.id, 'bonum.purchase.unknown', `The first payment's outcome is unknown (${err instanceof Error ? err.name : 'error'})`);
 		}
 	}
+	const unpaid = setup.paymentAmount !== null && !charge;
+	await note(
+		ctx,
+		setup.projectId,
+		setup.id,
+		'bonum.card_token.saved',
+		charge ? `Card saved; first payment of ${charge.amount} MNT charged on it` : unpaid ? 'Card saved after its step had ended; the first payment was not charged' : 'Card saved'
+	);
 	return 'saved';
 }
 

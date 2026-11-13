@@ -332,12 +332,18 @@ is only a hint, notifications that never arrive. Code against these.
   `period_key = <key>:<invoiceId>` and `bonum.subscription_payment.same_period`.
   A FAILED webhook whose attempt time maps to a credited period is ignored.
   A charge before the first scheduled date has no key (the `payNow` charge).
-- **A card step's first payment** (`cardSaved`): a SUCCESS `CARD-TOKEN` for a
-  step with `payment_amount` set is recorded as a succeeded charge at the
-  payable MNT amount Bonum reports, or, when it reports none (absent, only the
-  0.01 MNT check, or unreadable), at `payment_amount`, with activity
-  `bonum.card_token.amount_assumed`. `failSetup` emits `card.failed` only for
-  the caller whose conditional update ended the step.
+- **A card step's first payment** (`cardSaved`): for a `first_payment_by =
+  'purchase'` step with `payment_amount` set, one batch writes the card, the
+  payment as a pending charge, and `card.saved` naming it; only then is the
+  Purchase sent on the new token, so a redelivered `CARD-TOKEN` (a duplicate
+  by the card's primary key and the event's dedupe key) never charges twice.
+  A step that had already ended `failed` saves its card and charges nothing.
+  For a `'tokenize'` step (started before), a SUCCESS is recorded as a
+  succeeded charge at the payable MNT amount Bonum reports, or, when it
+  reports none (absent, only the 0.01 MNT check, or unreadable), at
+  `payment_amount`, with activity `bonum.card_token.amount_assumed`.
+  `failSetup` emits `card.failed` only for the caller whose conditional
+  update ended the step.
 - **Cron**: deliver every minute; sweep (with card-step expiry) then late check when `minute % 10 ===
   0`; reconcile at minute 5; purge at minute 0. `cronStatus` reports
   `lateCheck` and `reconcile` too.

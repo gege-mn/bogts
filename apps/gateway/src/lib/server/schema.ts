@@ -257,7 +257,7 @@ export const cardSetup = sqliteTable(
 		/**
 		 * How that first payment is taken. `purchase`: Bonum's page only saves the card, and the
 		 * payment is a purchase on the new token once it is in. `tokenize`: it was asked of Bonum's
-		 * card page itself, as every step started before 0.3 was; Bonum did not report taking it.
+		 * card page itself, as every step started before `purchase` was; Bonum did not report taking it.
 		 */
 		firstPaymentBy: text('first_payment_by', { enum: FIRST_PAYMENT_BY }).notNull().default('tokenize'),
 		createdAt: integer('created_at').notNull(),
