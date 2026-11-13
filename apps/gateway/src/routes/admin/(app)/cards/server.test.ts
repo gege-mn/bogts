@@ -86,7 +86,9 @@ describe('/admin/cards', () => {
 			expect(waiting.card).toMatchObject({ status: 'pending', cardPageUrl: LINK, firstPayment: { amount: 1500, reference: 'order-1' } });
 
 			db.$d1.strictColumns = false;
-			await handleBonumWebhook({ db, config: testConfig() }, cardToken(setup.id, 1500));
+			// The first payment is a purchase on the new card once Bonum reports it saved.
+			fakeBonum({ [PURCHASE]: () => jsonResponse({ data: { id: 1, completedAt: '2026-01-13 11:55:44', status: 'SUCCESS' }, status: 200 }) });
+			await handleBonumWebhook({ db, config: testConfig() }, cardToken(setup.id, 0.01));
 			db.$d1.strictColumns = strict;
 
 			const saved = await call(listLoad, event('/admin/cards'));
