@@ -30,6 +30,7 @@ export const CARD_STATUSES = ['active', 'removed'] as const;
 export type CardStatus = (typeof CARD_STATUSES)[number];
 
 export const CARD_SETUP_STATUSES = ['pending', 'completed', 'failed'] as const;
+export const FIRST_PAYMENT_BY = ['tokenize', 'purchase'] as const;
 export type CardSetupStatus = (typeof CARD_SETUP_STATUSES)[number];
 
 export const SUBSCRIPTION_STATUSES = ['pending', 'active', 'past_due', 'cancelled', 'failed'] as const;
@@ -253,6 +254,12 @@ export const cardSetup = sqliteTable(
 		paymentAmount: integer('payment_amount'),
 		paymentReference: text('payment_reference'),
 		paymentItems: text('payment_items', { mode: 'json' }).$type<LineItem[]>(),
+		/**
+		 * How that first payment is taken. `purchase`: Bonum's page only saves the card, and the
+		 * payment is a purchase on the new token once it is in. `tokenize`: it was asked of Bonum's
+		 * card page itself, as every step started before 0.3 was; Bonum did not report taking it.
+		 */
+		firstPaymentBy: text('first_payment_by', { enum: FIRST_PAYMENT_BY }).notNull().default('tokenize'),
 		createdAt: integer('created_at').notNull(),
 		updatedAt: integer('updated_at').notNull()
 	},

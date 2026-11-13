@@ -264,13 +264,21 @@ export async function chargeCard(
 		updatedAt: now
 	};
 	await ctx.db.insert(chargeTable).values(row);
+	return purchase(ctx, row, token);
+}
 
+/**
+ * Sends the purchase of a pending charge row that is already written (its id
+ * is the merchant `transactionId`) and applies Bonum's answer.
+ */
+export async function purchase(ctx: ServiceContext, row: Charge, token: string): Promise<Charge> {
+	const { id } = row;
 	let status: number;
 	let body: unknown;
 	try {
 		({ status, body } = await bonumCall(ctx, 'purchase', '/mpay-service/merchant/transaction/purchase', {
 			method: 'POST',
-			body: { amount: input.amount, currency: 'MNT', transactionId: id },
+			body: { amount: row.amount, currency: 'MNT', transactionId: id },
 			cardToken: token
 		}));
 	} catch (err) {

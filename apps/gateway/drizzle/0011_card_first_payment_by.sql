@@ -1,0 +1,1 @@
+ALTER TABLE `card_setup` ADD `first_payment_by` text DEFAULT 'tokenize' NOT NULL;

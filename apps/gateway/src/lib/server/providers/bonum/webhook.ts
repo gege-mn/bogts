@@ -275,9 +275,11 @@ async function cardToken(ctx: ServiceContext, body: Body, success: boolean): Pro
 
 /**
  * A plan-less card step succeeded: the card is saved, and its first payment is
- * a charge. Bonum takes a first payment that was asked for (`payment.amount`)
- * but does not always report it in `amounts[]` (seen on production,
- * 2026-10-05), so a SUCCESS with no payable amount is recorded as the amount
+ * a charge. A step since 0.3 asked Bonum's page for nothing but the card, and
+ * its first payment is a purchase made once the card is saved (`saveCard`).
+ * An older step asked the page for the payment (`payment.amount`), which Bonum
+ * did not always report in `amounts[]` (seen on production, 2026-10-05 and
+ * 2026-11-13), so a SUCCESS with no payable amount is recorded as the amount
  * asked for. An amount Bonum does report wins.
  */
 async function cardSaved(ctx: ServiceContext, setup: CardSetup, body: Body): Promise<WebhookResult> {
@@ -295,6 +297,15 @@ async function cardSaved(ctx: ServiceContext, setup: CardSetup, body: Body): Pro
 		});
 		return 'ignored';
 	}
+	const card = {
+		token,
+		mask: str(body.mask).slice(0, 32) || '****',
+		expiry: str(body.expiry).slice(0, 16) || null,
+		bankName: str(obj(body.bank)?.name).slice(0, 100) || null
+	};
+	if (setup.firstPaymentBy === 'purchase') {
+		return (await saveCard(ctx, setup, { ...card, paidAmount: 0 })) === 'saved' ? 'processed' : 'duplicate';
+	}
 	const raw = cardTokenAmount(body);
 	const reported = raw === null || isVerificationCharge(raw) ? 0 : mnt(raw);
 	if (reported === null) {
@@ -307,10 +318,7 @@ async function cardSaved(ctx: ServiceContext, setup: CardSetup, body: Body): Pro
 		await note(ctx, { ...base, kind: 'bonum.card_token.reported', summary: reportedShape(body) });
 	}
 	const result = await saveCard(ctx, setup, {
-		token,
-		mask: str(body.mask).slice(0, 32) || '****',
-		expiry: str(body.expiry).slice(0, 16) || null,
-		bankName: str(obj(body.bank)?.name).slice(0, 100) || null,
+		...card,
 		paidAmount: assumed ? asked : (reported ?? 0),
 		amountAssumed: assumed
 	});

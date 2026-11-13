@@ -7,10 +7,12 @@
  * row's id as `transactionId`, and hand back the link. The card itself is
  * created by the CARD-TOKEN webhook (`saveCard`, called from
  * `providers/bonum/webhook.ts`) under the same id, so the id a project gets
- * at once is the card's id for good. A first payment (`payment`) is taken by
- * Bonum in the same step and becomes an ordinary succeeded charge, whether or
- * not Bonum's message repeats the amount; without one Bonum takes its
- * 0.01 MNT check, which is not money.
+ * at once is the card's id for good. Bonum's page only saves the card (with
+ * its 0.01 MNT check, which is not money). A first payment (`payment`) is a
+ * purchase on the new token as soon as the card is in, an ordinary charge
+ * (`services/charges.ts`): asked of Bonum's card page itself, it was not
+ * reported and may not have been kept by Bonum. A step started before that
+ * change (`first_payment_by = 'tokenize'`) is finished the old way.
  *
  * A card step the customer never finishes is ended after `CARD_STEP_TTL_MS`
  * (`expireCardSteps`, from the cron sweep).
@@ -43,8 +45,8 @@ import {
 	type Project
 } from '../schema';
 import { BonumError, bonumConfigOf, bonumRequest, providerError, unwrap } from '../providers/bonum/client';
-import { bonumItem, checkedFollowUpLink } from '../providers/bonum/util';
-import { chargeEventData, chargeLedgerRef } from './charges';
+import { checkedFollowUpLink } from '../providers/bonum/util';
+import { chargeEventData, chargeLedgerRef, purchase } from './charges';
 import { nowOf, type ServiceContext } from './context';
 import { priceFields, priceOf } from './items';
 import { iso, ListQuery, pageOf, type ListPage } from './paging';
@@ -216,6 +218,7 @@ async function startSetup(
 		paymentAmount: price?.amount ?? null,
 		paymentReference: input.payment?.reference ?? null,
 		paymentItems: price?.items ?? null,
+		firstPaymentBy: 'purchase',
 		createdAt: now,
 		updatedAt: now
 	};
@@ -227,15 +230,8 @@ async function startSetup(
 			method: 'POST',
 			body: {
 				callback: `${ctx.config.publicOrigin}/return/c/${id}`,
-				transactionId: id,
-				// No `subscription`: a plain card token. No `payment`: Bonum's 0.01 MNT check.
-				...(price
-					? {
-							payment: { amount: price.amount },
-							// Bonum's page shows one line; its items can't carry a negative (discount) line.
-							items: [bonumItem(price.items?.[0]?.label ?? input.payment!.reference, price.amount, { image: true })]
-						}
-					: {})
+				transactionId: id
+				// No `subscription`: a plain card token. No `payment`: Bonum's 0.01 MNT check. A first payment is a purchase once the card is in.
 			}
 		});
 		followUpLink = checkedFollowUpLink(unwrap(body).followUpLink, 'cards/tokenize');
@@ -331,6 +327,7 @@ export type SavedCardDetails = {
 export async function saveCard(ctx: ServiceContext, setup: CardSetup, details: SavedCardDetails): Promise<'saved' | 'duplicate'> {
 	if (setup.status === 'completed') return 'duplicate';
 	const now = nowOf(ctx);
+	if (setup.firstPaymentBy === 'purchase') return saveThenCharge(ctx, setup, details, now);
 	const paid = details.paidAmount > 0;
 	// The lines describe the amount the project asked for; they are kept only when Bonum took exactly that.
 	const asAsked = paid && details.paidAmount === setup.paymentAmount;
@@ -381,31 +378,7 @@ export async function saveCard(ctx: ServiceContext, setup: CardSetup, details: S
 		: null;
 	try {
 		await ctx.db.batch([
-			ctx.db.insert(cardTable).values({
-				id: setup.id,
-				projectId: setup.projectId,
-				customerRef: setup.customerRef,
-				provider: 'bonum',
-				tokenEnc: await encrypt(details.token, ctx.config.encryptionKey),
-				mask: details.mask,
-				expiry: details.expiry,
-				bankName: details.bankName,
-				status: 'active',
-				createdAt: now,
-				updatedAt: now
-			}),
-			ctx.db
-				.update(cardSetup)
-				.set({ status: 'completed', followUpLink: null, updatedAt: now })
-				.where(eq(cardSetup.id, setup.id)),
-			...(replaced
-				? [
-						ctx.db
-							.update(cardTable)
-							.set({ status: 'removed', tokenEnc: null, removedAt: now, updatedAt: now })
-							.where(and(eq(cardTable.id, replaced), eq(cardTable.status, 'active')))
-					]
-				: []),
+			...(await cardWrites(ctx, setup, details, now)),
 			...(charge
 				? [
 						ctx.db.insert(chargeTable).values(charge),
@@ -452,6 +425,101 @@ export async function saveCard(ctx: ServiceContext, setup: CardSetup, details: S
 			'bonum.card_token.amount_mismatch',
 			`The first payment was ${details.paidAmount} MNT, not the ${setup.paymentAmount} MNT asked for`
 		);
+	}
+	return 'saved';
+}
+
+/** The card under the step's id, the step completed, and the card it replaces removed. */
+async function cardWrites(ctx: ServiceContext, setup: CardSetup, details: SavedCardDetails, now: number) {
+	const replaced = setup.replacesCardId;
+	return [
+		ctx.db.insert(cardTable).values({
+			id: setup.id,
+			projectId: setup.projectId,
+			customerRef: setup.customerRef,
+			provider: 'bonum',
+			tokenEnc: await encrypt(details.token, ctx.config.encryptionKey),
+			mask: details.mask,
+			expiry: details.expiry,
+			bankName: details.bankName,
+			status: 'active',
+			createdAt: now,
+			updatedAt: now
+		}),
+		ctx.db.update(cardSetup).set({ status: 'completed', followUpLink: null, updatedAt: now }).where(eq(cardSetup.id, setup.id)),
+		...(replaced
+			? [
+					ctx.db
+						.update(cardTable)
+						.set({ status: 'removed', tokenEnc: null, removedAt: now, updatedAt: now })
+						.where(and(eq(cardTable.id, replaced), eq(cardTable.status, 'active')))
+				]
+			: [])
+	] as const;
+}
+
+/**
+ * A step whose first payment is a purchase (`first_payment_by = 'purchase'`):
+ * in one batch the card, its first payment as a pending charge, and
+ * `card.saved` naming that charge; then the purchase on the new token, whose
+ * outcome is an ordinary `charge.*` event. Whatever Bonum's message says it
+ * took is its 0.01 MNT check: nothing else was asked of its page.
+ */
+async function saveThenCharge(ctx: ServiceContext, setup: CardSetup, details: SavedCardDetails, now: number): Promise<'saved' | 'duplicate'> {
+	const charge: Charge | null =
+		setup.paymentAmount !== null
+			? (() => {
+					const id = newId();
+					return {
+						id,
+						projectId: setup.projectId,
+						cardId: setup.id,
+						subscriptionId: null,
+						amount: setup.paymentAmount,
+						items: setup.paymentItems,
+						reference: setup.paymentReference ?? setup.id,
+						providerTransactionId: id,
+						status: 'pending',
+						failureCode: null,
+						reversedAt: null,
+						createdAt: now,
+						updatedAt: now
+					};
+				})()
+			: null;
+	const replaced = setup.replacesCardId;
+	const dedupeKey = `card.saved:${setup.id}`;
+	const saved = eventInserts(
+		ctx.db,
+		{
+			projectId: setup.projectId,
+			type: replaced ? 'card.replaced' : 'card.saved',
+			subjectId: setup.id,
+			data: {
+				cardId: setup.id,
+				customerRef: setup.customerRef,
+				cardMask: details.mask,
+				...(replaced ? { replacesCardId: replaced } : {}),
+				...(charge ? { chargeId: charge.id } : {})
+			},
+			dedupeKey
+		},
+		now
+	);
+	try {
+		await ctx.db.batch([...(await cardWrites(ctx, setup, details, now)), ...(charge ? [ctx.db.insert(chargeTable).values(charge)] : []), ...saved.statements]);
+	} catch (err) {
+		if (await eventExists(ctx, dedupeKey)) return 'duplicate';
+		throw err;
+	}
+	await note(ctx, setup.projectId, setup.id, 'bonum.card_token.saved', charge ? `Card saved; charging the first payment of ${charge.amount} MNT` : 'Card saved');
+	if (charge) {
+		try {
+			await purchase(ctx, charge, details.token);
+		} catch (err) {
+			// Bonum may have the purchase: the charge stays pending, as an unanswered one does, and is never sent twice.
+			await note(ctx, setup.projectId, setup.id, 'bonum.card_token.charge_unknown', `The first payment's outcome is unknown (${err instanceof Error ? err.name : 'error'})`);
+		}
 	}
 	return 'saved';
 }

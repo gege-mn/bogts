@@ -7,6 +7,18 @@ change the API; the notes will say how to upgrade.
 
 ## [Unreleased]
 
+### Changed
+
+- **A saved card's first payment is a purchase on the new card.** Bonum's
+  card page used to be asked for the amount (`payment.amount`), but Bonum
+  never reported taking it, and Bogts recorded the amount it had asked for.
+  The page now only saves the card (with Bonum's 0.01 MNT check), and the
+  first payment is charged right after, like any charge of a saved card:
+  `card.saved` names the charge, and its outcome arrives as `charge.succeeded`
+  or `charge.failed`. A declined first payment leaves the card saved. Card
+  steps started before this release are finished the old way.
+  **Apply migration `0011_card_first_payment_by` before deploying.**
+
 ### Added
 
 - **Notifications**: a message to Discord, to Telegram, or a signed JSON POST

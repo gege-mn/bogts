@@ -151,7 +151,7 @@ export interface Card {
 export interface CreateCardInput {
 	customerRef: string;
 	returnUrl: string;
-	/** A first payment taken while the card is saved. Without it nothing is charged. */
+	/** A first payment, charged on the card as soon as it is saved (`card.saved` names the charge). Without it nothing is charged. */
 	payment?: {
 		/** Integer MNT. Send this or `items`. */
 		amount?: number;
@@ -289,7 +289,7 @@ export interface CardEventData {
 	cardMask?: string;
 	/** card.replaced: the card this one took the place of (now removed) */
 	replacesCardId?: string;
-	/** card.saved / card.replaced: the charge of the first payment, when one was taken */
+	/** card.saved / card.replaced: the charge of the first payment, when one was asked for; it may still be pending */
 	chargeId?: string;
 	/** card.failed: `checkout_failed`. card.removed: `removed_by_project` or `removed_by_admin`. */
 	reason?: string;

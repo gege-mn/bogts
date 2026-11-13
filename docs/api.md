@@ -360,11 +360,14 @@ curl https://pay.example.com/v1/cards \
   -d '{"customerRef":"user_123","returnUrl":"https://app.example.com/billing","payment":{"reference":"order-42","items":[{"label":"Pro, first month","amount":49900},{"label":"Launch discount","amount":-10000}]}}'
 ```
 
-Without `payment`, nothing is charged: Bonum takes 0.01 MNT to check the card,
-which Bogts does not count as money. With `payment`, the amount is charged when
-the card is saved and reported as an ordinary [charge](#charges)
-(`charge.succeeded`, with your `reference`); `card.saved` carries its
-`chargeId`. If the customer gives up, nothing is charged and no card is saved.
+Bonum's page only saves the card: it takes 0.01 MNT to check it, which Bogts
+does not count as money. With `payment`, Bogts charges the amount on the new
+card as soon as it is saved, as an ordinary [charge](#charges) with your
+`reference`: `card.saved` carries its `chargeId`, and its outcome follows as
+`charge.succeeded` or `charge.failed` (or later, if Bonum queues it). A
+declined first payment leaves the card saved; remove it if you do not want to
+keep it. Without `payment`, nothing is charged. If the customer gives up,
+nothing is charged and no card is saved.
 
 A card still `pending` 24 hours after it was started becomes `failed`, with
 `card.failed`. If Bonum reports the card after that, it is saved all the same
